@@ -210,7 +210,8 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
                         const uint8_t *texture, int16_t tex_start,
                         int16_t tex_end, int16_t brightness,
                         uint8_t valand, uint8_t valshift, int16_t horand,
-                        int16_t totalyoff, int16_t fromtile);
+                        int16_t totalyoff, int16_t fromtile,
+                        int16_t tex_id);
 void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
                               int32_t floor_height, const uint8_t *texture,
                               int16_t brightness, int is_water);

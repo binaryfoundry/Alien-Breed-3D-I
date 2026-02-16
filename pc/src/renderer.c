@@ -547,17 +547,27 @@ typedef struct {
  * Takes two endpoints in view space, projects them, and draws
  * columns from left to right with perspective-correct texturing.
  * ----------------------------------------------------------------------- */
+/* Wall texture index for switches (stub_io wall_texture_table). */
+#define SWITCHES_WALL_TEX_ID  11
+
 void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
                         int16_t top, int16_t bot,
                         const uint8_t *texture, int16_t tex_start,
                         int16_t tex_end, int16_t brightness,
                         uint8_t valand, uint8_t valshift, int16_t horand,
-                        int16_t totalyoff, int16_t fromtile)
+                        int16_t totalyoff, int16_t fromtile,
+                        int16_t tex_id)
 {
     RendererState *r = &g_renderer;
 
     /* Both behind camera - skip */
     if (z1 <= 0 && z2 <= 0) return;
+
+    /* Switch walls: only draw when camera is on front of wall (one-sided). */
+    if (tex_id == SWITCHES_WALL_TEX_ID) {
+        int32_t cross = (int32_t)x1 * (int32_t)z2 - (int32_t)x2 * (int32_t)z1;
+        if (cross >= 0) return;
+    }
 
     /* Clip to near plane */
     int16_t cx1 = x1, cz1 = z1;
@@ -675,8 +685,12 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
         if (amiga_d6 < 0) amiga_d6 = 0;
         if (amiga_d6 > 32) amiga_d6 = 32;
 
+        /* Switch walls: depth bias so they draw in front of the wall behind them. */
+        int32_t depth_z = col_z;
+        if (tex_id == SWITCHES_WALL_TEX_ID && col_z > 16) depth_z = col_z - 16;
+
         draw_wall_column(screen_x, y_top, y_bot, tex_col, texture,
-                         amiga_d6, valand, valshift, totalyoff, col_z);
+                         amiga_d6, valand, valshift, totalyoff, depth_z);
     }
 }
 
@@ -2031,7 +2045,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                           dw->top, dw->bot,
                           dw->texture, dw->tex_start, dw->tex_end,
                           dw->brightness, dw->valand, dw->valshift, dw->horand,
-                          dw->totalyoff, dw->fromtile);
+                          dw->totalyoff, dw->fromtile, dw->tex_id);
     }
 
     /* Draw zone objects after all floor and walls so sprites are on top.
