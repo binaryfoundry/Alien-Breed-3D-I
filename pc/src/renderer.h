@@ -187,7 +187,7 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
                         int16_t totalyoff, int16_t fromtile);
 void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
                               int32_t floor_height, const uint8_t *texture,
-                              int16_t brightness);
+                              int16_t brightness, int is_water);
 void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
                           int16_t width, int16_t height, int16_t z,
                           const uint8_t *graphic, int16_t brightness);

@@ -686,7 +686,7 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
  * ----------------------------------------------------------------------- */
 void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
                               int32_t floor_height, const uint8_t *texture,
-                              int16_t brightness)
+                              int16_t brightness, int is_water)
 {
     /* Translated from AB3DI.s pastfloorbright (line 6657).
      *
@@ -809,6 +809,16 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
         int tu = (u_fp >> 16) & 63;
         int tv = (v_fp >> 16) & 63;
 
+        /* Water: gentle bump/ripple from UV (texture-space) so pattern scales with surface */
+        if (is_water) {
+            int u_hi = (u_fp >> 12) & 63;
+            int v_hi = (v_fp >> 12) & 63;
+            int bump_u = ((u_hi + v_hi * 3) & 7) - 3;  /* -3..+3 */
+            int bump_v = ((v_hi - u_hi * 2) & 7) - 3;
+            tu = (tu + bump_u) & 63;
+            tv = (tv + bump_v) & 63;
+        }
+
         /* ASM texture sampling: move.b (a0,d5.w*4),d0
          * d5.w = (V << 8) | U, so index = V*1024 + U*4
          * This samples every 4th texel in both directions. */
@@ -822,8 +832,10 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
             uint8_t texel = texture[tex_idx];
 
             if (rs->floor_pal) {
-                /* Use FloorPalScaled brightness LUT */
+                /* Use FloorPalScaled brightness LUT.
+                 * Water: boost brightness so it doesn't look too dark when blended. */
                 int pal_level = amiga_d6 / 2;
+                if (is_water && pal_level < 8) pal_level = 8;  /* minimum brightness for water */
                 if (pal_level > 14) pal_level = 14;
                 const uint8_t *lut = rs->floor_pal + pal_level * 512;
                 uint16_t cw = (uint16_t)((lut[texel * 2] << 8) | lut[texel * 2 + 1]);
@@ -831,11 +843,27 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
             } else {
                 /* Fallback: use texel as grayscale with brightness */
                 int lit = ((int)texel * gray) >> 8;
+                if (is_water && lit < 96) lit = 96;  /* water a bit brighter */
                 argb = 0xFF000000u | ((uint32_t)lit << 16) | ((uint32_t)lit << 8) | (uint32_t)lit;
             }
         } else {
             /* No texture - solid gray based on brightness */
             argb = 0xFF000000u | ((uint32_t)gray << 16) | ((uint32_t)gray << 8) | (uint32_t)gray;
+        }
+
+        /* Water: blend with background (more water than bg so texture reads clearly) */
+        if (is_water) {
+            uint32_t bg = row32[x];
+            uint32_t br = (bg >> 16) & 0xFF, bg_g = (bg >> 8) & 0xFF, bb = bg & 0xFF;
+            uint32_t wr = (argb >> 16) & 0xFF, wg = (argb >> 8) & 0xFF, wb = argb & 0xFF;
+            /* ~60% water, 40% background */
+            uint32_t r = (wr * 154 + br * 102) >> 8;
+            uint32_t g = (wg * 154 + bg_g * 102) >> 8;
+            uint32_t b = (wb * 154 + bb * 102) >> 8;
+            if (r > 255) r = 255;
+            if (g > 255) g = 255;
+            if (b > 255) b = 255;
+            argb = 0xFF000000u | (r << 16) | (g << 8) | b;
         }
 
         depth[x] = floor_z;
@@ -1533,7 +1561,8 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 if (re >= r->right_clip) re = (int16_t)(r->right_clip - 1);
                 if (le > re) continue;
                 renderer_draw_floor_span((int16_t)row, le, re,
-                                         rel_h, floor_tex, bright);
+                                         rel_h, floor_tex, bright,
+                                         (entry_type == 7) ? 1 : 0);
             }
             break;
         }
