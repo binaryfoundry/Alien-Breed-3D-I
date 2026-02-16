@@ -76,6 +76,15 @@ typedef struct {
 #define WALL_TEX_SIZE   (64 * 32 * 2)  /* palette + pixels */
 
 /* -----------------------------------------------------------------------
+ * Object/sprite graphics (Objects table from ObjDraw3.ChipRam.s)
+ *
+ * objVectNumber (object data offset 8) indexes this table.
+ * Each slot can have a .wad (chunky pixels); we use 32x32 per frame.
+ * ----------------------------------------------------------------------- */
+#define MAX_SPRITE_TYPES  20
+#define SPRITE_FRAME_SIZE (32 * 32)  /* bytes per frame when using simple layout */
+
+/* -----------------------------------------------------------------------
  * Renderer state
  * ----------------------------------------------------------------------- */
 typedef struct {
@@ -122,6 +131,12 @@ typedef struct {
 
     /* Wall texture table (from WallChunk.s walltiles) */
     const uint8_t *walltiles[MAX_WALL_TILES]; /* Pointers to pixel data (past 2048-byte LUT) */
+
+    /* Object sprite graphics (from LoadFromDisk.s LoadObjects, ObjDraw3 Objects).
+     * sprite_wad[vect] = raw .wad data; sprite_wad_size[vect] = size in bytes.
+     * Frame N is at offset N * SPRITE_FRAME_SIZE when size allows. */
+    const uint8_t *sprite_wad[MAX_SPRITE_TYPES];
+    size_t         sprite_wad_size[MAX_SPRITE_TYPES];
 
     /* Wall palette/LUT table.
      * Each entry points to the 2048-byte brightness LUT at the START of
@@ -190,7 +205,8 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
                               int16_t brightness, int is_water);
 void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
                           int16_t width, int16_t height, int16_t z,
-                          const uint8_t *graphic, int16_t brightness);
+                          const uint8_t *graphic, const uint8_t *sprite_pal,
+                          int16_t brightness);
 void renderer_draw_gun(GameState *state);
 
 /* Get pointer to the current rendered frame for display */

@@ -884,7 +884,8 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
  * ----------------------------------------------------------------------- */
 void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
                           int16_t width, int16_t height, int16_t z,
-                          const uint8_t *graphic, int16_t brightness)
+                          const uint8_t *graphic, const uint8_t *sprite_pal,
+                          int16_t brightness)
 {
     uint8_t *buf = g_renderer.buffer;
     uint32_t *rgb = g_renderer.rgb_buffer;
@@ -896,11 +897,15 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
     int sx = screen_x - half_w;
     int sy = screen_y - height;
 
-    /* Brightness from distance */
+    /* Brightness from distance (0-15 for LUT block index) */
     int bright = brightness - (z >> 7);
     if (bright < 0) bright = 0;
     if (bright > 15) bright = 15;
-    int gray = bright * 17; /* 0-255 */
+    int gray = bright * 17; /* 0-255 for placeholder */
+
+    /* LUT block offset: same layout as wall (32 blocks × 64 bytes); use first 16. */
+    uint16_t lut_block_off = (uint16_t)(bright * 64);
+    if (lut_block_off >= 2048) lut_block_off = 2048 - 64;
 
     /* Sprite depth: bias in front so sprites (e.g. switches) on walls consistently
      * win over the wall and avoid z-fighting. */
@@ -940,15 +945,35 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
 
             uint8_t texel = 0;
             if (graphic) {
-                texel = graphic[src_row * src_w + src_col];
+                /* Object .wad: Amiga PTR column layout. 32×32 column-major (offset = col*32+row)
+                 * often matches; 16×64 col-major also works for some pickups. */
+                size_t off = (size_t)(src_col * src_h + src_row);
+                if (off < SPRITE_FRAME_SIZE) {
+                    texel = graphic[off];
+                }
                 if (texel == 0) continue; /* Transparent */
             }
 
             depth_row[screen_col] = sprite_z_bias;
             row8[screen_col] = graphic ? texel : 1;
-            /* Placeholder when no graphic loaded (switches, pickups, etc.) */
-            row32[screen_col] = 0xFF000000u
-                | ((uint32_t)gray << 16) | ((uint32_t)(gray/3) << 8) | 0;
+
+            /* Real colors from sprite LUT when we have graphic + palette.
+             * Clamp texel to 5-bit (0-31) for 32-entry LUT blocks; 8-bit chunky uses lower bits. */
+            if (graphic && sprite_pal) {
+                int ti = (int)texel & 31;
+                int lut_off = lut_block_off + ti * 2;
+                if (lut_off + 1 < 2048) {
+                    uint16_t color_word = ((uint16_t)sprite_pal[lut_off] << 8)
+                                        | (uint16_t)sprite_pal[lut_off + 1];
+                    row32[screen_col] = amiga12_to_argb(color_word);
+                } else {
+                    row32[screen_col] = 0xFF000000u
+                        | ((uint32_t)gray << 16) | ((uint32_t)(gray/3) << 8) | 0;
+                }
+            } else {
+                row32[screen_col] = 0xFF000000u
+                    | ((uint32_t)gray << 16) | ((uint32_t)(gray/3) << 8) | 0;
+            }
         }
     }
 }
@@ -1083,6 +1108,30 @@ void renderer_draw_gun(GameState *state)
     }
 }
 
+/* Object .wad layout matches wall: first 2048 bytes = brightness LUT (32 blocks × 64 bytes).
+ * Pixel data starts at 2048; we use 32×32 chunky bytes per frame. */
+#define SPRITE_WAD_HEADER  2048
+
+/* -----------------------------------------------------------------------
+ * Sprite graphic lookup (Objects table: vect + frame -> pixel data)
+ *
+ * If .wad has >= 2048+1024 bytes, pixel data starts at 2048 (LUT at 0).
+ * Else if >= 1024 bytes, treat as raw chunky (no LUT).
+ * Returns NULL if no data or frame out of range.
+ * ----------------------------------------------------------------------- */
+static const uint8_t *sprite_graphic_for(int vect, int frame)
+{
+    if (vect < 0 || vect >= MAX_SPRITE_TYPES) return NULL;
+    const uint8_t *wad = g_renderer.sprite_wad[vect];
+    size_t size = g_renderer.sprite_wad_size[vect];
+    if (!wad || size < SPRITE_FRAME_SIZE) return NULL;
+    size_t pixel_start = (size >= SPRITE_WAD_HEADER + SPRITE_FRAME_SIZE)
+                        ? SPRITE_WAD_HEADER : 0;
+    size_t offset = pixel_start + (size_t)frame * SPRITE_FRAME_SIZE;
+    if (offset + SPRITE_FRAME_SIZE > size) return NULL;
+    return wad + offset;
+}
+
 /* -----------------------------------------------------------------------
  * Draw objects in the current zone
  *
@@ -1113,8 +1162,14 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         int16_t obj_type = rd16(obj);
         if (obj_type < 0) break; /* End of list */
 
-        int16_t graphic_room = rd16(obj + 14); /* GraphicRoom */
-        if (graphic_room != zone_id) continue;
+        /* Which zone draws this object: use GraphicRoom (offset 26) and/or zone (offset 12).
+         * Draw when either valid field matches current zone so pickups/enemies show even if
+         * only one is set in level data. */
+        int16_t graphic_room = rd16(obj + 26);
+        int16_t obj_zone = rd16(obj + 12);
+        int in_this_zone = (graphic_room >= 0 && graphic_room == (int16_t)zone_id)
+                           || (obj_zone >= 0 && obj_zone == (int16_t)zone_id);
+        if (!in_this_zone) continue;
 
         ObjRotatedPoint *orp = &r->obj_rotated[i];
         if (orp->z <= 0) continue; /* Behind camera */
@@ -1188,16 +1243,21 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         if (sprite_w > RENDER_WIDTH) sprite_w = RENDER_WIDTH;
         if (sprite_h > RENDER_HEIGHT) sprite_h = RENDER_HEIGHT;
 
-        /* Frame selection:
-         * objVectNumber (offset 8) = sprite graphic index
-         * objVectFrameNumber (offset 10) = animation frame
-         * These would index into loaded sprite data; NULL until graphics load. */
-        /* int16_t vect_num = rd16(obj + 8); */
-        /* int16_t frame_num = rd16(obj + 10); */
+        /* objVectNumber (offset 8) = sprite type; objVectFrameNumber (offset 10) = frame */
+        int16_t vect_num = rd16(obj + 8);
+        int16_t frame_num = rd16(obj + 10);
+        const uint8_t *graphic = sprite_graphic_for((int)vect_num, (int)frame_num);
+        /* First 2048 bytes of .wad = brightness LUT for color lookup */
+        const uint8_t *sprite_pal = NULL;
+        if (vect_num >= 0 && vect_num < MAX_SPRITE_TYPES
+            && g_renderer.sprite_wad[vect_num]
+            && g_renderer.sprite_wad_size[vect_num] >= SPRITE_WAD_HEADER) {
+            sprite_pal = g_renderer.sprite_wad[vect_num];
+        }
 
         renderer_draw_sprite((int16_t)scr_x, (int16_t)scr_y,
                              (int16_t)sprite_w, (int16_t)sprite_h,
-                             orp->z, NULL, (int16_t)bright);
+                             orp->z, graphic, sprite_pal, (int16_t)bright);
     }
 }
 
@@ -1298,6 +1358,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
      * overwrite on top (matching Amiga behaviour). Stream order is preserved. */
     DeferredWall deferred[MAX_DEFERRED_WALLS];
     int num_deferred = 0;
+    int objects_drawn_this_zone = 0;
 
     int max_iter = 500; /* Safety limit */
 
@@ -1589,6 +1650,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
 
             /* Draw all objects in this zone */
             draw_zone_objects(state, zone_id, zone_roof, zone_floor);
+            objects_drawn_this_zone = 1;
             break;
         }
 
@@ -1727,6 +1789,12 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
             /* Unknown type - skip nothing (type word already consumed) */
             break;
         }
+    }
+
+    /* If the zone graph had no type-4 (object) entry, still draw objects for this zone.
+     * Some level data (e.g. twolev) may not include object entries in the stream. */
+    if (!objects_drawn_this_zone) {
+        draw_zone_objects(state, zone_id, zone_roof, zone_floor);
     }
 
     /* Sort deferred walls by depth (painter's algorithm: far to near).

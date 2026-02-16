@@ -1131,7 +1131,63 @@ void io_dump_textures(void)
     printf("[IO] Texture dump complete. Check the textures/ folder.\n");
 }
 
-void io_load_objects(void)  { printf("[IO] load_objects (stub)\n"); }
+/* Object sprite .wad files (ObjDraw3.ChipRam.s Objects, LoadFromDisk.s OBJ_NAMES).
+ * Index = objVectNumber (object data offset 8). NULL = no file / use placeholder. */
+static const char *sprite_wad_names[MAX_SPRITE_TYPES] = {
+    "ALIEN2.wad",       /* 0 */
+    "PICKUPS.wad",      /* 1 */
+    "bigbullet.wad",    /* 2 */
+    NULL,               /* 3 ugly monster (missing) */
+    "flyingalien.wad",  /* 4 */
+    "keys.wad",         /* 5 */
+    "rockets.wad",      /* 6 */
+    "barrel.wad",       /* 7 */
+    "bigbullet.wad",    /* 8 explosion uses same wad */
+    "newgunsinhand.wad",/* 9 */
+    "newmarine.wad",    /* 10 */
+    "ALIEN2.wad",       /* 11 big alien (fallback to ALIEN2) */
+    "lamps.wad",        /* 12 */
+    "worm.wad",         /* 13 */
+    "bigclaws.wad",     /* 14 */
+    "tree.wad",         /* 15 */
+    "newmarine.wad",    /* 16 tough marine */
+    "newmarine.wad",    /* 17 flame marine */
+    NULL, NULL
+};
+
+static uint8_t *g_sprite_data[MAX_SPRITE_TYPES];
+
+void io_load_objects(void)
+{
+    printf("[IO] Loading object sprites...\n");
+    extern RendererState g_renderer;
+
+    for (int i = 0; i < MAX_SPRITE_TYPES; i++) {
+        free(g_sprite_data[i]);
+        g_sprite_data[i] = NULL;
+        g_renderer.sprite_wad[i] = NULL;
+        g_renderer.sprite_wad_size[i] = 0;
+    }
+
+    for (int i = 0; i < MAX_SPRITE_TYPES; i++) {
+        if (!sprite_wad_names[i]) continue;
+
+        char subpath[256], path[512];
+        snprintf(subpath, sizeof(subpath), "includes/%s", sprite_wad_names[i]);
+        make_data_path(path, sizeof(path), subpath);
+
+        uint8_t *data = NULL;
+        size_t size = 0;
+        if (sb_load_file(path, &data, &size) == 0 && data && size > 0) {
+            g_sprite_data[i] = data;
+            g_renderer.sprite_wad[i] = data;
+            g_renderer.sprite_wad_size[i] = size;
+            printf("[IO] Sprite %2d: %s (%zu bytes)\n", i, sprite_wad_names[i], size);
+        } else {
+            printf("[IO] Sprite %2d: %s (not found)\n", i, sprite_wad_names[i]);
+        }
+    }
+}
 void io_load_sfx(void)     { printf("[IO] load_sfx (stub)\n"); }
 void io_load_panel(void)   { printf("[IO] load_panel (stub)\n"); }
 

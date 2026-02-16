@@ -61,7 +61,7 @@ void order_zones(ZoneOrder *out, const LevelState *level,
 {
     out->count = 0;
 
-    if (!level->data || !list_of_graph_rooms || !level->zone_adds) {
+    if (!level->data || !level->zone_adds) {
         return;
     }
 
@@ -74,18 +74,34 @@ void order_zones(ZoneOrder *out, const LevelState *level,
     memset(to_draw_tab, 0, sizeof(to_draw_tab));
     memset(distances, 0, sizeof(distances));
 
-    /* Step 1: Walk ListOfGraphRooms and mark rooms to draw
-     * Format: int16 zone_id, then graph data. 8 bytes per entry.
-     * Terminated by -1.
+    /* Step 1: Mark rooms to draw.
+     * If list_of_graph_rooms is provided, walk it (format: int16 zone_id per 8-byte entry, -1 terminator).
+     * If NULL or list yields no zones, fallback: mark all zones 0..num_zones-1 so something is drawn.
      */
-    const uint8_t *lgr = list_of_graph_rooms;
-    while (1) {
-        int16_t zone_id = read_be16(lgr);
-        if (zone_id < 0) break;
-        if (zone_id < 256) {
-            to_draw_tab[zone_id] = 1;
+    if (list_of_graph_rooms) {
+        const uint8_t *lgr = list_of_graph_rooms;
+        while (1) {
+            int16_t zone_id = read_be16(lgr);
+            if (zone_id < 0) break;
+            if (zone_id < 256) {
+                to_draw_tab[zone_id] = 1;
+            }
+            lgr += 8; /* 8 bytes per entry */
         }
-        lgr += 8; /* 8 bytes per entry */
+    }
+    /* Fallback: if no list or no zones marked (e.g. real level format has list at zone+48 that isn't zone IDs), draw all */
+    {
+        int any_marked = 0;
+        for (int z = 0; z < 256; z++) {
+            if (to_draw_tab[z]) { any_marked = 1; break; }
+        }
+        if (!any_marked && level->num_zones > 0) {
+            int n = level->num_zones;
+            if (n > 256) n = 256;
+            for (int z = 0; z < n; z++) {
+                to_draw_tab[z] = 1;
+            }
+        }
     }
 
     /* View-space depth uses same rotation as renderer: view_z = dx*sin + dz*cos */
