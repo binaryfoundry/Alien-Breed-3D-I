@@ -1131,31 +1131,113 @@ void io_dump_textures(void)
     printf("[IO] Texture dump complete. Check the textures/ folder.\n");
 }
 
-/* Object sprite .wad files (ObjDraw3.ChipRam.s Objects, LoadFromDisk.s OBJ_NAMES).
- * Index = objVectNumber (object data offset 8). NULL = no file / use placeholder. */
+/* Object sprite files (ObjDraw3.ChipRam.s Objects, LoadFromDisk.s OBJ_NAMES).
+ * Index = objVectNumber (object data offset 8). NULL = no file / use placeholder.
+ *
+ * Amiga format: each object type has 3 files:
+ *   .wad = packed pixel data (3 five-bit pixels per 16-bit word)
+ *   .ptr = column pointer table (4 bytes per column)
+ *   .pal = brightness-graded palette (15 levels * 32 colors * 2 bytes) */
 static const char *sprite_wad_names[MAX_SPRITE_TYPES] = {
-    "ALIEN2.wad",       /* 0 */
-    "PICKUPS.wad",      /* 1 */
-    "bigbullet.wad",    /* 2 */
-    NULL,               /* 3 ugly monster (missing) */
-    "flyingalien.wad",  /* 4 */
-    "keys.wad",         /* 5 */
-    "rockets.wad",      /* 6 */
-    "barrel.wad",       /* 7 */
-    "bigbullet.wad",    /* 8 explosion uses same wad */
-    "newgunsinhand.wad",/* 9 */
-    "newmarine.wad",    /* 10 */
-    "ALIEN2.wad",       /* 11 big alien (fallback to ALIEN2) */
-    "lamps.wad",        /* 12 */
-    "worm.wad",         /* 13 */
-    "bigclaws.wad",     /* 14 */
-    "tree.wad",         /* 15 */
-    "newmarine.wad",    /* 16 tough marine */
-    "newmarine.wad",    /* 17 flame marine */
+    "ALIEN2.wad",           /* 0 */
+    "PICKUPS.wad",          /* 1 */
+    "bigbullet.wad",        /* 2 */
+    NULL,                   /* 3 ugly monster (missing) */
+    "flyingalien.wad",      /* 4 */
+    "keys.wad",             /* 5 */
+    "rockets.wad",          /* 6 */
+    "barrel.wad",           /* 7 */
+    "explosion.wad",        /* 8 */
+    "newgunsinhand.wad",    /* 9 */
+    "newmarine.wad",        /* 10 */
+    "BIGSCARYALIEN.wad",    /* 11 */
+    "lamps.wad",            /* 12 */
+    "worm.wad",             /* 13 */
+    "bigclaws.wad",         /* 14 */
+    "tree.wad",             /* 15 */
+    "newmarine.wad",        /* 16 tough marine (shared with 10) */
+    "newmarine.wad",        /* 17 flame marine (shared with 10) */
+    NULL, NULL
+};
+
+static const char *sprite_ptr_names[MAX_SPRITE_TYPES] = {
+    "ALIEN2.ptr",           /* 0 */
+    "PICKUPS.ptr",          /* 1 */
+    "bigbullet.ptr",        /* 2 */
+    NULL,                   /* 3 */
+    "flyingalien.ptr",      /* 4 */
+    "keys.ptr",             /* 5 */
+    "rockets.ptr",          /* 6 */
+    "barrel.ptr",           /* 7 */
+    "explosion.ptr",        /* 8 */
+    "newgunsinhand.ptr",    /* 9 */
+    "newmarine.ptr",        /* 10 */
+    "BIGSCARYALIEN.ptr",    /* 11 */
+    "lamps.ptr",            /* 12 */
+    "worm.ptr",             /* 13 */
+    "bigclaws.ptr",         /* 14 */
+    "tree.ptr",             /* 15 */
+    "newmarine.ptr",        /* 16 */
+    "newmarine.ptr",        /* 17 */
+    NULL, NULL
+};
+
+static const char *sprite_pal_names[MAX_SPRITE_TYPES] = {
+    "alien2.pal",           /* 0 */
+    "PICKUPS.PAL",          /* 1 */
+    "bigbullet.pal",        /* 2 */
+    NULL,                   /* 3 */
+    "FLYINGalien.pal",      /* 4 */
+    "keys.pal",             /* 5 */
+    "ROCKETS.pal",          /* 6 */
+    "BARREL.pal",           /* 7 */
+    "explosion.pal",        /* 8 */
+    "newgunsinhand.pal",    /* 9 */
+    "newmarine.pal",        /* 10 */
+    "BIGSCARYALIEN.pal",    /* 11 */
+    "LAMPS.pal",            /* 12 */
+    "worm.pal",             /* 13 */
+    "bigclaws.pal",         /* 14 */
+    "tree.pal",             /* 15 */
+    "toughmutant.pal",      /* 16 */
+    "flamemutant.pal",      /* 17 */
     NULL, NULL
 };
 
 static uint8_t *g_sprite_data[MAX_SPRITE_TYPES];
+static uint8_t *g_sprite_ptr_data[MAX_SPRITE_TYPES];
+static uint8_t *g_sprite_pal_store[MAX_SPRITE_TYPES];
+
+/* Try loading a file from includes/ or pal/ directories. */
+static int load_sprite_file(const char *name, const char *prefix,
+                            uint8_t **out_data, size_t *out_size)
+{
+    char subpath[256], path[512];
+    *out_data = NULL;
+    *out_size = 0;
+
+    /* Try includes/<name> */
+    snprintf(subpath, sizeof(subpath), "includes/%s", name);
+    make_data_path(path, sizeof(path), subpath);
+    if (sb_load_file(path, out_data, out_size) == 0 && *out_data && *out_size > 0)
+        return 1;
+
+    /* Try <prefix>/<name> (e.g. pal/alien2.pal) */
+    if (prefix) {
+        snprintf(subpath, sizeof(subpath), "%s/%s", prefix, name);
+        make_data_path(path, sizeof(path), subpath);
+        if (sb_load_file(path, out_data, out_size) == 0 && *out_data && *out_size > 0)
+            return 1;
+    }
+
+    /* Try disk/includes/<name> */
+    snprintf(subpath, sizeof(subpath), "disk/includes/%s", name);
+    make_data_path(path, sizeof(path), subpath);
+    if (sb_load_file(path, out_data, out_size) == 0 && *out_data && *out_size > 0)
+        return 1;
+
+    return 0;
+}
 
 void io_load_objects(void)
 {
@@ -1163,28 +1245,48 @@ void io_load_objects(void)
     extern RendererState g_renderer;
 
     for (int i = 0; i < MAX_SPRITE_TYPES; i++) {
-        free(g_sprite_data[i]);
-        g_sprite_data[i] = NULL;
-        g_renderer.sprite_wad[i] = NULL;
-        g_renderer.sprite_wad_size[i] = 0;
+        free(g_sprite_data[i]);       g_sprite_data[i] = NULL;
+        free(g_sprite_ptr_data[i]);   g_sprite_ptr_data[i] = NULL;
+        free(g_sprite_pal_store[i]);  g_sprite_pal_store[i] = NULL;
+        g_renderer.sprite_wad[i] = NULL;  g_renderer.sprite_wad_size[i] = 0;
+        g_renderer.sprite_ptr[i] = NULL;  g_renderer.sprite_ptr_size[i] = 0;
+        g_renderer.sprite_pal_data[i] = NULL; g_renderer.sprite_pal_size[i] = 0;
     }
 
     for (int i = 0; i < MAX_SPRITE_TYPES; i++) {
-        if (!sprite_wad_names[i]) continue;
+        /* Load .wad (packed pixel data) */
+        if (sprite_wad_names[i]) {
+            uint8_t *data = NULL; size_t sz = 0;
+            if (load_sprite_file(sprite_wad_names[i], NULL, &data, &sz)) {
+                g_sprite_data[i] = data;
+                g_renderer.sprite_wad[i] = data;
+                g_renderer.sprite_wad_size[i] = sz;
+                printf("[IO] Sprite %2d WAD: %s (%zu bytes)\n", i, sprite_wad_names[i], sz);
+            } else {
+                printf("[IO] Sprite %2d WAD: %s (not found)\n", i, sprite_wad_names[i]);
+            }
+        }
 
-        char subpath[256], path[512];
-        snprintf(subpath, sizeof(subpath), "includes/%s", sprite_wad_names[i]);
-        make_data_path(path, sizeof(path), subpath);
+        /* Load .ptr (column pointer table) */
+        if (sprite_ptr_names[i]) {
+            uint8_t *data = NULL; size_t sz = 0;
+            if (load_sprite_file(sprite_ptr_names[i], NULL, &data, &sz)) {
+                g_sprite_ptr_data[i] = data;
+                g_renderer.sprite_ptr[i] = data;
+                g_renderer.sprite_ptr_size[i] = sz;
+                printf("[IO] Sprite %2d PTR: %s (%zu bytes)\n", i, sprite_ptr_names[i], sz);
+            }
+        }
 
-        uint8_t *data = NULL;
-        size_t size = 0;
-        if (sb_load_file(path, &data, &size) == 0 && data && size > 0) {
-            g_sprite_data[i] = data;
-            g_renderer.sprite_wad[i] = data;
-            g_renderer.sprite_wad_size[i] = size;
-            printf("[IO] Sprite %2d: %s (%zu bytes)\n", i, sprite_wad_names[i], size);
-        } else {
-            printf("[IO] Sprite %2d: %s (not found)\n", i, sprite_wad_names[i]);
+        /* Load .pal (brightness palette) */
+        if (sprite_pal_names[i]) {
+            uint8_t *data = NULL; size_t sz = 0;
+            if (load_sprite_file(sprite_pal_names[i], "pal", &data, &sz)) {
+                g_sprite_pal_store[i] = data;
+                g_renderer.sprite_pal_data[i] = data;
+                g_renderer.sprite_pal_size[i] = sz;
+                printf("[IO] Sprite %2d PAL: %s (%zu bytes)\n", i, sprite_pal_names[i], sz);
+            }
         }
     }
 }

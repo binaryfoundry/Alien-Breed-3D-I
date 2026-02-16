@@ -82,7 +82,7 @@ typedef struct {
  * Each slot can have a .wad (chunky pixels); we use 32x32 per frame.
  * ----------------------------------------------------------------------- */
 #define MAX_SPRITE_TYPES  20
-#define SPRITE_FRAME_SIZE (32 * 32)  /* bytes per frame when using simple layout */
+#define MAX_SPRITE_FRAMES 40  /* max frames per sprite type */
 
 /* -----------------------------------------------------------------------
  * Renderer state
@@ -133,10 +133,21 @@ typedef struct {
     const uint8_t *walltiles[MAX_WALL_TILES]; /* Pointers to pixel data (past 2048-byte LUT) */
 
     /* Object sprite graphics (from LoadFromDisk.s LoadObjects, ObjDraw3 Objects).
-     * sprite_wad[vect] = raw .wad data; sprite_wad_size[vect] = size in bytes.
-     * Frame N is at offset N * SPRITE_FRAME_SIZE when size allows. */
+     *
+     * Amiga format: .wad contains packed pixel data (3 five-bit pixels per
+     * 16-bit word).  .ptr contains column pointer table (4 bytes per column:
+     * byte 0 = which "third" 0/1/2, bytes 1-3 = offset into .wad).
+     * .pal contains brightness-graded palette (15 levels × 32 colors × 2 bytes).
+     *
+     * sprite_wad[vect] = raw .wad pixel data
+     * sprite_ptr[vect] = column pointer table (.ptr file)
+     * sprite_pal_data[vect] = brightness palette (.pal file) */
     const uint8_t *sprite_wad[MAX_SPRITE_TYPES];
     size_t         sprite_wad_size[MAX_SPRITE_TYPES];
+    const uint8_t *sprite_ptr[MAX_SPRITE_TYPES];
+    size_t         sprite_ptr_size[MAX_SPRITE_TYPES];
+    const uint8_t *sprite_pal_data[MAX_SPRITE_TYPES];
+    size_t         sprite_pal_size[MAX_SPRITE_TYPES];
 
     /* Wall palette/LUT table.
      * Each entry points to the 2048-byte brightness LUT at the START of
@@ -205,7 +216,11 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
                               int16_t brightness, int is_water);
 void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
                           int16_t width, int16_t height, int16_t z,
-                          const uint8_t *graphic, const uint8_t *sprite_pal,
+                          const uint8_t *wad, size_t wad_size,
+                          const uint8_t *ptr_data, size_t ptr_size,
+                          const uint8_t *pal, size_t pal_size,
+                          uint32_t ptr_offset, uint16_t down_strip,
+                          int src_cols, int src_rows,
                           int16_t brightness);
 void renderer_draw_gun(GameState *state);
 

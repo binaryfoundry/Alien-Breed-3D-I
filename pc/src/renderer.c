@@ -886,12 +886,31 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
  *
  * Translated from ObjDraw3.ChipRam.s BitMapObj.
  *
- * Draws a scaled sprite at a given screen position.
+ * Amiga sprite WAD format: packed pixel data where each 16-bit word
+ * encodes 3 five-bit pixels (bits 0-4, 5-9, 10-14).
+ *
+ * The .ptr file is a column pointer table: each column is 4 bytes:
+ *   byte 0 = "third" (0, 1, or 2) = which 5-bit slice of each word
+ *   bytes 1-3 = 24-bit offset into .wad data for this column
+ *
+ * The .pal file contains a brightness-graded palette:
+ *   15 levels × 32 colors × 2 bytes (big-endian 12-bit Amiga color words).
+ *   Level N starts at offset N * 64; color C at offset N * 64 + C * 2.
+ *
+ * Per-pixel decode (same as gun renderer):
+ *   third 0: texel = low_byte & 0x1F
+ *   third 1: texel = (word >> 5) & 0x1F
+ *   third 2: texel = (high_byte >> 2) & 0x1F
+ *
  * Uses painter's algorithm (drawn back-to-front by zone order).
  * ----------------------------------------------------------------------- */
 void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
                           int16_t width, int16_t height, int16_t z,
-                          const uint8_t *graphic, const uint8_t *sprite_pal,
+                          const uint8_t *wad, size_t wad_size,
+                          const uint8_t *ptr_data, size_t ptr_size,
+                          const uint8_t *pal, size_t pal_size,
+                          uint32_t ptr_offset, uint16_t down_strip,
+                          int src_cols, int src_rows,
                           int16_t brightness)
 {
     uint8_t *buf = g_renderer.buffer;
@@ -899,87 +918,103 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
     int16_t *depth_buf = g_renderer.depth_buffer;
     if (!buf || !rgb || !depth_buf) return;
     if (z <= 0) return;
+    if (!wad || !ptr_data) return;
+    if (src_cols < 1) src_cols = 32;
+    if (src_rows < 1) src_rows = 32;
 
     int16_t half_w = width / 2;
     int sx = screen_x - half_w;
     int sy = screen_y - height;
 
-    /* Brightness from distance (0-15 for LUT block index) */
-    int bright = brightness - (z >> 7);
+    /* Brightness → palette level (0-14). Level N = offset N*64 in .pal.
+     * .pal can be 64 bytes (one level) or 15*64=960 bytes (15 levels). */
+    int bright = brightness;
     if (bright < 0) bright = 0;
-    if (bright > 15) bright = 15;
-    int gray = bright * 17; /* 0-255 for placeholder */
+    if (bright > 14) bright = 14;
+    uint32_t pal_level_off = (uint32_t)bright * 64;
+    if (pal && pal_size < 960) pal_level_off = 0;  /* single-level or small palette */
+    int gray = bright * 17;
 
-    /* LUT block offset: same layout as wall (32 blocks × 64 bytes); use first 16. */
-    uint16_t lut_block_off = (uint16_t)(bright * 64);
-    if (lut_block_off >= 2048) lut_block_off = 2048 - 64;
-
-    /* Sprite depth: bias in front so sprites (e.g. switches) on walls consistently
-     * win over the wall and avoid z-fighting. */
-    int16_t sprite_z = (z > 32767) ? 32767 : z;
+    /* Sprite depth: bias in front so sprites on walls win z-fighting. */
+    int16_t sprite_z = (z > 32767) ? 32767 : (int16_t)z;
     int16_t sprite_z_bias = (sprite_z > 16) ? (sprite_z - 16) : 1;
 
-    /* Draw the sprite pixel by pixel with scaling */
-    int src_w = 32;
-    int src_h = 32;
+    /* Draw column-by-column (matching Amiga's column-strip approach).
+     * For each screen column, find the source column in the PTR table,
+     * then draw all rows from the packed WAD data. */
+    for (int dx = 0; dx < width; dx++) {
+        int screen_col = sx + dx;
+        if (screen_col < g_renderer.left_clip ||
+            screen_col >= g_renderer.right_clip) continue;
 
-    for (int dy = 0; dy < height; dy++) {
-        int screen_row = sy + dy;
-        if (screen_row < 0 || screen_row >= RENDER_HEIGHT) continue;
+        /* Map screen column to source column */
+        int src_col = dx * src_cols / width;
+        if (src_col >= src_cols) src_col = src_cols - 1;
 
-        int src_row = dy * src_h / height;
-        if (src_row >= src_h) src_row = src_h - 1;
+        /* Read PTR entry for this source column */
+        uint32_t entry_off = ptr_offset + (uint32_t)src_col * 4;
+        if (entry_off + 4 > ptr_size) continue;
 
-        uint8_t *row8 = buf + screen_row * RENDER_STRIDE;
-        uint32_t *row32 = rgb + screen_row * RENDER_WIDTH;
-        int16_t *depth_row = depth_buf + screen_row * RENDER_WIDTH;
+        const uint8_t *entry = ptr_data + entry_off;
+        uint8_t mode = entry[0];
+        uint32_t wad_off = ((uint32_t)entry[1] << 16)
+                         | ((uint32_t)entry[2] << 8)
+                         | (uint32_t)entry[3];
+        if (wad_off == 0) continue;  /* blank column */
+        if (wad_off >= wad_size) continue;
 
-        for (int dx = 0; dx < width; dx++) {
-            int screen_col = sx + dx;
-            if (screen_col < g_renderer.left_clip ||
-                screen_col >= g_renderer.right_clip) continue;
+        const uint8_t *src = wad + wad_off;
 
-            /* Don't use column clip for sprites: objects are drawn before this zone's
-             * walls (deferred), so clip would be from a previous zone and can hide
-             * switches. Depth test alone handles occlusion. */
+        for (int dy = 0; dy < height; dy++) {
+            int screen_row = sy + dy;
+            if (screen_row < 0 || screen_row >= RENDER_HEIGHT) continue;
 
-            /* Per-pixel depth test: draw when sprite is closer; use biased depth
-             * so sprites on walls win (sprite_z_bias < wall depth). */
-            if (sprite_z_bias >= depth_row[screen_col]) continue;
+            if (sprite_z_bias >= depth_buf[screen_row * RENDER_WIDTH + screen_col])
+                continue;
 
-            int src_col = dx * src_w / width;
-            if (src_col >= src_w) src_col = src_w - 1;
+            /* Map screen row to source row, add down_strip */
+            int src_row = dy * src_rows / height;
+            if (src_row >= src_rows) src_row = src_rows - 1;
+            int row_idx = (int)down_strip + src_row;
 
+            /* Bounds check: each row is 2 bytes (one 16-bit word) */
+            if (wad_off + (size_t)(row_idx + 1) * 2 > wad_size) continue;
+
+            /* Decode 5-bit pixel from packed word (same as gun renderer) */
             uint8_t texel = 0;
-            if (graphic) {
-                /* Object .wad: Amiga PTR column layout. 32×32 column-major (offset = col*32+row)
-                 * often matches; 16×64 col-major also works for some pickups. */
-                size_t off = (size_t)(src_col * src_h + src_row);
-                if (off < SPRITE_FRAME_SIZE) {
-                    texel = graphic[off];
-                }
-                if (texel == 0) continue; /* Transparent */
+            if (mode == 0) {
+                texel = src[row_idx * 2 + 1] & 0x1F;
+            } else if (mode == 1) {
+                uint16_t w = (uint16_t)((src[row_idx * 2] << 8) | src[row_idx * 2 + 1]);
+                texel = (uint8_t)((w >> 5) & 0x1F);
+            } else {
+                texel = (src[row_idx * 2] >> 2) & 0x1F;
             }
+            if (texel == 0) continue;  /* transparent */
+
+            uint8_t *row8 = buf + screen_row * RENDER_STRIDE;
+            uint32_t *row32 = rgb + screen_row * RENDER_WIDTH;
+            int16_t *depth_row = depth_buf + screen_row * RENDER_WIDTH;
 
             depth_row[screen_col] = sprite_z_bias;
-            row8[screen_col] = graphic ? texel : 1;
+            row8[screen_col] = texel;
 
-            /* Real colors from sprite LUT when we have graphic + palette.
-             * Clamp texel to 5-bit (0-31) for 32-entry LUT blocks; 8-bit chunky uses lower bits. */
-            if (graphic && sprite_pal) {
-                int ti = (int)texel & 31;
-                int lut_off = lut_block_off + ti * 2;
-                if (lut_off + 1 < 2048) {
-                    uint16_t color_word = ((uint16_t)sprite_pal[lut_off] << 8)
-                                        | (uint16_t)sprite_pal[lut_off + 1];
-                    row32[screen_col] = amiga12_to_argb(color_word);
+            /* Color from .pal brightness palette (15 levels × 64 bytes or single 64-byte block).
+             * Amiga .pal is typically big-endian 12-bit words; try both orders if colors look wrong. */
+            if (pal && pal_size >= 64) {
+                uint32_t level_off = (pal_level_off + 64 <= pal_size) ? pal_level_off : 0;
+                uint32_t ci = level_off + (uint32_t)texel * 2;
+                if (ci + 1 < pal_size) {
+                    uint16_t cw = (uint16_t)((pal[ci] << 8) | pal[ci + 1]);
+                    row32[screen_col] = amiga12_to_argb(cw);
                 } else {
                     row32[screen_col] = 0xFF000000u
-                        | ((uint32_t)gray << 16) | ((uint32_t)(gray/3) << 8) | 0;
+                        | ((uint32_t)gray << 16) | ((uint32_t)gray << 8) | (uint32_t)gray;
                 }
             } else {
+                /* No palette: neutral gray (was orange/brown before) */
                 row32[screen_col] = 0xFF000000u
-                    | ((uint32_t)gray << 16) | ((uint32_t)(gray/3) << 8) | 0;
+                    | ((uint32_t)gray << 16) | ((uint32_t)gray << 8) | (uint32_t)gray;
             }
         }
     }
@@ -1115,29 +1150,160 @@ void renderer_draw_gun(GameState *state)
     }
 }
 
-/* Object .wad layout matches wall: first 2048 bytes = brightness LUT (32 blocks × 64 bytes).
- * Pixel data starts at 2048; we use 32×32 chunky bytes per frame. */
-#define SPRITE_WAD_HEADER  2048
-
 /* -----------------------------------------------------------------------
- * Sprite graphic lookup (Objects table: vect + frame -> pixel data)
+ * Sprite FRAMES tables (from ObjDraw3.ChipRam.s).
  *
- * If .wad has >= 2048+1024 bytes, pixel data starts at 2048 (LUT at 0).
- * Else if >= 1024 bytes, treat as raw chunky (no LUT).
- * Returns NULL if no data or frame out of range.
+ * Each frame entry is {ptr_offset, down_strip}:
+ *   ptr_offset = byte offset into .ptr table for the starting column
+ *   down_strip = vertical row offset within each column's data
+ *
+ * The Amiga stores these as dc.w pairs; ptr_offset values are in bytes
+ * (column_index * 4 since each PTR entry is 4 bytes).
  * ----------------------------------------------------------------------- */
-static const uint8_t *sprite_graphic_for(int vect, int frame)
-{
-    if (vect < 0 || vect >= MAX_SPRITE_TYPES) return NULL;
-    const uint8_t *wad = g_renderer.sprite_wad[vect];
-    size_t size = g_renderer.sprite_wad_size[vect];
-    if (!wad || size < SPRITE_FRAME_SIZE) return NULL;
-    size_t pixel_start = (size >= SPRITE_WAD_HEADER + SPRITE_FRAME_SIZE)
-                        ? SPRITE_WAD_HEADER : 0;
-    size_t offset = pixel_start + (size_t)frame * SPRITE_FRAME_SIZE;
-    if (offset + SPRITE_FRAME_SIZE > size) return NULL;
-    return wad + offset;
-}
+typedef struct { uint16_t ptr_off; uint16_t down_strip; } SpriteFrame;
+
+/* Type 0 - ALIEN2: 64 cols/frame, walking 0-15, exploding 16-31, dying 32-33 */
+static const SpriteFrame frames_alien[] = {
+    {0,0},{64*4,0},{64*4*2,0},{64*4*3,0},{64*4*4,0},{64*4*5,0},{64*4*6,0},{64*4*7,0},
+    {64*4*8,0},{64*4*9,0},{64*4*10,0},{64*4*11,0},{64*4*12,0},{64*4*13,0},{64*4*14,0},{64*4*15,0},
+    {4*(64*16),0},{4*(64*16+16),0},{4*(64*16+32),0},{4*(64*16+48),0},
+    {4*(64*16),16},{4*(64*16+16),16},{4*(64*16+32),16},{4*(64*16+48),16},
+    {4*(64*16),32},{4*(64*16+16),32},{4*(64*16+32),32},{4*(64*16+48),32},
+    {4*(64*16),48},{4*(64*16+16),48},{4*(64*16+32),48},{4*(64*16+48),48},
+    {64*4*17,0},{64*4*18,0}
+};
+
+/* Type 1 - PICKUPS: variable layout */
+static const SpriteFrame frames_pickups[] = {
+    {0,0},                /* 0: medikit */
+    {0,32},               /* 1: big gun */
+    {64*4,32},            /* 2: bullet */
+    {32*4,0},             /* 3: ammo */
+    {64*4,0},             /* 4: battery */
+    {192*4,0},            /* 5: rockets */
+    {128*4,0},{(128+16)*4,0},{(128+32)*4,0},{(128+48)*4,0},   /* 6-9: gunpop */
+    {128*4,16},{(128+16)*4,16},{(128+32)*4,16},{(128+48)*4,16}, /* 10-13 */
+    {128*4,32},{(128+16)*4,32},{(128+32)*4,32},{(64+16)*4,32}, /* 14-17 */
+    {64*4,48},{(64+16)*4,48},                                   /* 18-19 */
+    {(64+32)*4,0},        /* 20: rocket launcher */
+    {64*4,32},{(64+16)*4,32},{(64+16)*4,48},{64*4,48},          /* 21-24: grenade */
+    {128*4,32},           /* 25: shotgun */
+    {256*4,0},            /* 26: grenade launcher */
+    {64*3*4,32},          /* 27: shotgun shells*4 */
+    {(64*3+32)*4,0},      /* 28: shotgun shells*20 */
+    {(64*3+32)*4,32}      /* 29: grenade clip */
+};
+
+/* Type 2 - BIGBULLET */
+static const SpriteFrame frames_bigbullet[] = {
+    {0,0},{0,32},{32*4,0},{32*4,32},{64*4,0},{64*4,32},{96*4,0},{96*4,32},
+    {128*4,0},{128*4,32},{32*5*4,0},{32*5*4,32},{32*6*4,0},{32*6*4,32},
+    {32*7*4,0},{32*7*4,32},{32*8*4,0},{32*8*4,32},{32*9*4,0},{32*9*4,32}
+};
+
+/* Type 4 - FLYINGMONSTER: 64 cols/frame, 21 frames */
+static const SpriteFrame frames_flying[] = {
+    {0,0},{64*4,0},{64*4*2,0},{64*4*3,0},{64*4*4,0},{64*4*5,0},{64*4*6,0},{64*4*7,0},
+    {64*4*8,0},{64*4*9,0},{64*4*10,0},{64*4*11,0},{64*4*12,0},{64*4*13,0},{64*4*14,0},{64*4*15,0},
+    {64*4*16,0},{64*4*17,0},{64*4*18,0},{64*4*19,0},{64*4*20,0}
+};
+
+/* Type 5 - KEYS: 4 frames */
+static const SpriteFrame frames_keys[] = {
+    {0,0},{0,32},{32*4,0},{32*4,32}
+};
+
+/* Type 6 - ROCKETS: 12 frames */
+static const SpriteFrame frames_rockets[] = {
+    {0,0},{32*4,0},{0,32},{32*4,32},
+    {64*4,0},{(64+32)*4,0},{64*4,32},{(64+32)*4,32},
+    {128*4,0},{(128+32)*4,0},{128*4,32},{(128+32)*4,32}
+};
+
+/* Type 7 - BARREL: 1 frame */
+static const SpriteFrame frames_barrel[] = { {0,0} };
+
+/* Type 8 - EXPLOSION: 9 frames (uses explosion.wad/ptr, not bigbullet) */
+static const SpriteFrame frames_explosion[] = {
+    {0,0},{64*4,0},{64*4*2,0},{64*4*3,0},{64*4*4,0},{64*4*5,0},{64*4*6,0},{64*4*7,0},{64*4*8,0}
+};
+
+/* Type 9 - GUNS (in-hand): handled by gun renderer, but provide frames */
+static const SpriteFrame frames_guns[] = {
+    {96*4*20,0},{96*4*21,0},{96*4*22,0},{96*4*23,0},
+    {96*4*4,0},{96*4*5,0},{96*4*6,0},{96*4*7,0},
+    {96*4*16,0},{96*4*17,0},{96*4*18,0},{96*4*19,0},
+    {96*4*12,0},{96*4*13,0},{96*4*14,0},{96*4*15,0},
+    {96*4*24,0},{96*4*25,0},{96*4*26,0},{96*4*27,0},
+    {0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},
+    {96*4*0,0},{96*4*1,0},{96*4*2,0},{96*4*3,0}
+};
+
+/* Type 10 - MARINE: 19 frames, 64 cols each */
+static const SpriteFrame frames_marine[] = {
+    {0,0},{64*4,0},{(64*2)*4,0},{(64*3)*4,0},{(64*4)*4,0},{(64*5)*4,0},
+    {(64*6)*4,0},{(64*7)*4,0},{(64*8)*4,0},{(64*9)*4,0},{(64*10)*4,0},
+    {(64*11)*4,0},{(64*12)*4,0},{(64*13)*4,0},{(64*14)*4,0},{(64*15)*4,0},
+    {(64*16)*4,0},{(64*17)*4,0},{(64*18)*4,0}
+};
+
+/* Type 11 - BIGALIEN: 4 frames, 128 cols each */
+static const SpriteFrame frames_bigalien[] = {
+    {0,0},{128*4,0},{128*4*2,0},{128*4*3,0}
+};
+
+/* Type 12 - LAMPS: 1 frame */
+static const SpriteFrame frames_lamps[] = { {0,0} };
+
+/* Type 13 - WORM: 21 frames, 90 cols each */
+static const SpriteFrame frames_worm[] = {
+    {0,0},{90*4,0},{90*4*2,0},{90*4*3,0},{90*4*4,0},{90*4*5,0},{90*4*6,0},{90*4*7,0},
+    {90*4*8,0},{90*4*9,0},{90*4*10,0},{90*4*11,0},{90*4*12,0},{90*4*13,0},{90*4*14,0},{90*4*15,0},
+    {90*4*16,0},{90*4*17,0},{90*4*18,0},{90*4*19,0},{90*4*20,0}
+};
+
+/* Type 14 - BIGCLAWS: 18 frames, 128 cols each */
+static const SpriteFrame frames_bigclaws[] = {
+    {0,0},{128*4,0},{128*4*2,0},{128*4*3,0},{128*4*4,0},{128*4*5,0},{128*4*6,0},{128*4*7,0},
+    {128*4*8,0},{128*4*9,0},{128*4*10,0},{128*4*11,0},{128*4*12,0},{128*4*13,0},{128*4*14,0},{128*4*15,0},
+    {128*4*16,0},{128*4*17,0}
+};
+
+/* Type 15 - TREE: 22 frames, 64 cols each (with repeats) */
+static const SpriteFrame frames_tree[] = {
+    {0,0},{64*4,0},{64*2*4,0},{64*3*4,0},
+    {0,0},{64*4,0},{64*2*4,0},{64*3*4,0},
+    {0,0},{64*4,0},{64*2*4,0},{64*3*4,0},
+    {0,0},{64*4,0},{64*2*4,0},{64*3*4,0},
+    {0,0},{0,0},
+    {32*8*4,0},{32*9*4,0},{32*10*4,0},{32*11*4,0}
+};
+
+/* Master lookup: frames table + count per sprite type */
+static const struct {
+    const SpriteFrame *frames;
+    int count;
+} sprite_frames_table[MAX_SPRITE_TYPES] = {
+    { frames_alien,     sizeof(frames_alien)/sizeof(SpriteFrame) },       /* 0 */
+    { frames_pickups,   sizeof(frames_pickups)/sizeof(SpriteFrame) },     /* 1 */
+    { frames_bigbullet, sizeof(frames_bigbullet)/sizeof(SpriteFrame) },   /* 2 */
+    { NULL, 0 },                                                          /* 3 ugly monster */
+    { frames_flying,    sizeof(frames_flying)/sizeof(SpriteFrame) },      /* 4 */
+    { frames_keys,      sizeof(frames_keys)/sizeof(SpriteFrame) },        /* 5 */
+    { frames_rockets,   sizeof(frames_rockets)/sizeof(SpriteFrame) },     /* 6 */
+    { frames_barrel,    sizeof(frames_barrel)/sizeof(SpriteFrame) },      /* 7 */
+    { frames_explosion, sizeof(frames_explosion)/sizeof(SpriteFrame) },   /* 8 */
+    { frames_guns,      sizeof(frames_guns)/sizeof(SpriteFrame) },        /* 9 */
+    { frames_marine,    sizeof(frames_marine)/sizeof(SpriteFrame) },      /* 10 */
+    { frames_bigalien,  sizeof(frames_bigalien)/sizeof(SpriteFrame) },    /* 11 */
+    { frames_lamps,     sizeof(frames_lamps)/sizeof(SpriteFrame) },       /* 12 */
+    { frames_worm,      sizeof(frames_worm)/sizeof(SpriteFrame) },        /* 13 */
+    { frames_bigclaws,  sizeof(frames_bigclaws)/sizeof(SpriteFrame) },    /* 14 */
+    { frames_tree,      sizeof(frames_tree)/sizeof(SpriteFrame) },        /* 15 */
+    { frames_marine,    sizeof(frames_marine)/sizeof(SpriteFrame) },      /* 16 tough (same as 10) */
+    { frames_marine,    sizeof(frames_marine)/sizeof(SpriteFrame) },      /* 17 flame (same as 10) */
+    { NULL, 0 }, { NULL, 0 }
+};
 
 /* -----------------------------------------------------------------------
  * Draw objects in the current zone
@@ -1204,8 +1370,10 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
      *   Offset 0:  object type (word)
      *   Offset 2:  brightness (objVectBright, word)
      *   Offset 4:  Y position (word, in ObjectPoints offset 2)
+     *   Offset 6:  world width (byte), offset 7: world height (byte)
      *   Offset 8:  vector number (objVectNumber, word)
      *   Offset 10: frame number (objVectFrameNumber, word)
+     *   Offset 14: source columns (byte), offset 15: source rows (byte)
      *   Offset 26: GraphicRoom (word)
      */
     for (int oi = 0; oi < obj_count; oi++) {
@@ -1225,13 +1393,14 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         int32_t obj_vx_fine = orp->x_fine;
         int scr_x = (int)(obj_vx_fine / orp->z) + (RENDER_WIDTH / 2);
 
+        const uint8_t *obj = level->object_data + i * OBJECT_SIZE;
+
         /* Get brightness + distance attenuation
          * ASM: asr.w #7,d6 ; add.w (a0)+,d6 (distance>>7 + obj brightness) */
-        const uint8_t *obj = level->object_data + i * OBJECT_SIZE;
         int16_t obj_bright = rd16(obj + 2);  /* objVectBright */
         int bright = (orp->z >> 7) + obj_bright;
         if (bright < 0) bright = 0;
-        if (bright > 15) bright = 15;
+        if (bright > 14) bright = 14;
 
         /* Get Y position from object data
          * ASM: move.w (a0)+,d2 ; ext.l d2 ; asl.l #7,d2 ; sub.l yoff,d2 ;
@@ -1240,31 +1409,69 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         int32_t obj_y_view = ((int32_t)obj_height_raw << 7) - y_off;
         int scr_y = (int)(obj_y_view / orp->z) + (RENDER_HEIGHT / 2 - 1);
 
-        /* Sprite dimensions - source is typically a small graphic.
-         * ASM reads width/height bytes from graphic data, shifts <<7,
-         * divides by depth.  Without loaded graphics, estimate from distance. */
-        int sprite_w = 32 * 128 / orp->z;
-        int sprite_h = 32 * 128 / orp->z;
+        /* Read world-space width/height bytes from object data (offsets 6, 7).
+         * ASM: move.b (a0)+,d3; move.b (a0)+,d4; lsl.w #7; divs d1 */
+        int world_w = (int)obj[6];
+        int world_h = (int)obj[7];
+        if (world_w < 1) world_w = 32;
+        if (world_h < 1) world_h = 32;
+
+        /* Screen pixel size = world_size * 128 / depth (ASM: lsl.w #7; divs d1).
+         * Then doubled (ASM: add.w d3,d3; add.w d4,d4). */
+        int sprite_w = world_w * 128 / orp->z;
+        int sprite_h = world_h * 128 / orp->z;
+        sprite_w *= 2;
+        sprite_h *= 2;
         if (sprite_w < 1) sprite_w = 1;
         if (sprite_h < 1) sprite_h = 1;
         if (sprite_w > RENDER_WIDTH) sprite_w = RENDER_WIDTH;
         if (sprite_h > RENDER_HEIGHT) sprite_h = RENDER_HEIGHT;
 
+        /* scr_y = projected screen Y of object base (feet). ASM: sub.w d4,d2 makes d2 = top.
+         * We pass bottom (feet) to renderer_draw_sprite; it uses sy = screen_y - height = top. */
+        /* (no offset: keep scr_y as feet position) */
+
+        /* Source dimensions: columns and rows from object data offsets 14, 15.
+         * These define how many columns in the PTR table to span and how many
+         * rows per column to sample. */
+        int src_cols = (int)obj[14];
+        int src_rows = (int)obj[15];
+        if (src_cols < 1) src_cols = 32;
+        if (src_rows < 1) src_rows = 32;
+
         /* objVectNumber (offset 8) = sprite type; objVectFrameNumber (offset 10) = frame */
         int16_t vect_num = rd16(obj + 8);
         int16_t frame_num = rd16(obj + 10);
-        const uint8_t *graphic = sprite_graphic_for((int)vect_num, (int)frame_num);
-        /* First 2048 bytes of .wad = brightness LUT for color lookup */
-        const uint8_t *sprite_pal = NULL;
-        if (vect_num >= 0 && vect_num < MAX_SPRITE_TYPES
-            && g_renderer.sprite_wad[vect_num]
-            && g_renderer.sprite_wad_size[vect_num] >= SPRITE_WAD_HEADER) {
-            sprite_pal = g_renderer.sprite_wad[vect_num];
+
+        if (vect_num < 0 || vect_num >= MAX_SPRITE_TYPES) continue;
+
+        /* Look up frame info from FRAMES table */
+        uint32_t ptr_off = 0;
+        uint16_t down_strip = 0;
+        const SpriteFrame *ft = sprite_frames_table[vect_num].frames;
+        int ft_count = sprite_frames_table[vect_num].count;
+        if (ft && frame_num >= 0 && frame_num < ft_count) {
+            ptr_off = ft[frame_num].ptr_off;
+            down_strip = ft[frame_num].down_strip;
+        }
+
+        /* Use dedicated .pal if loaded; else use first 2048 bytes of .wad as LUT (like wall tiles). */
+        const uint8_t *obj_pal = r->sprite_pal_data[vect_num];
+        size_t obj_pal_size = r->sprite_pal_size[vect_num];
+        if (!obj_pal && r->sprite_wad[vect_num] && r->sprite_wad_size[vect_num] >= 2048) {
+            obj_pal = r->sprite_wad[vect_num];
+            obj_pal_size = 2048;
         }
 
         renderer_draw_sprite((int16_t)scr_x, (int16_t)scr_y,
                              (int16_t)sprite_w, (int16_t)sprite_h,
-                             orp->z, graphic, sprite_pal, (int16_t)bright);
+                             orp->z,
+                             r->sprite_wad[vect_num], r->sprite_wad_size[vect_num],
+                             r->sprite_ptr[vect_num], r->sprite_ptr_size[vect_num],
+                             obj_pal, obj_pal_size,
+                             ptr_off, down_strip,
+                             src_cols, src_rows,
+                             (int16_t)bright);
     }
 }
 
@@ -1651,13 +1858,10 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
         {
             /* ObjDraw reads 1 word: draw mode (0=before water, 1=after, 2=full)
              * Then iterates ALL objects in ObjectData for this zone.
-             * Translated from ObjDraw3.ChipRam.s ObjDraw (line 38). */
-            /* int16_t draw_mode = rd16(ptr); */
+             * We defer drawing to the end of the zone so sprites are always
+             * on top of floor and walls (avoid "partially behind floor"). */
             ptr += 2;
-
-            /* Draw all objects in this zone */
-            draw_zone_objects(state, zone_id, zone_roof, zone_floor);
-            objects_drawn_this_zone = 1;
+            objects_drawn_this_zone = 1;  /* will draw after deferred walls */
             break;
         }
 
@@ -1798,12 +2002,6 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
         }
     }
 
-    /* If the zone graph had no type-4 (object) entry, still draw objects for this zone.
-     * Some level data (e.g. twolev) may not include object entries in the stream. */
-    if (!objects_drawn_this_zone) {
-        draw_zone_objects(state, zone_id, zone_roof, zone_floor);
-    }
-
     /* Sort deferred walls by depth (painter's algorithm: far to near).
      * Use maximum Z of endpoints as sort key - walls further away draw first,
      * closer walls overwrite them. Simple insertion sort is fine for small N. */
@@ -1834,6 +2032,10 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                           dw->brightness, dw->valand, dw->valshift, dw->horand,
                           dw->totalyoff, dw->fromtile);
     }
+
+    /* Draw zone objects after all floor and walls so sprites are on top.
+     * (objects_drawn_this_zone means type-4 was in stream; we still draw once per zone.) */
+    draw_zone_objects(state, zone_id, zone_roof, zone_floor);
 }
 
 /* -----------------------------------------------------------------------
@@ -1996,11 +2198,11 @@ void renderer_draw_display(GameState *state)
                 int split_y = (int)((int64_t)(rel >> 8) * 256 / 400) + (RENDER_HEIGHT / 2);
                 if (split_y < 1) split_y = 1;
                 if (split_y >= RENDER_HEIGHT) split_y = RENDER_HEIGHT - 1;
-                r->top_clip = split_y;
+                r->top_clip = (int16_t)split_y;
                 r->bot_clip = RENDER_HEIGHT - 1;
                 renderer_draw_zone(state, zone_id, 0);  /* lower room */
                 r->top_clip = 0;
-                r->bot_clip = split_y - 1;
+                r->bot_clip = (int16_t)(split_y - 1);
                 renderer_draw_zone(state, zone_id, 1);  /* upper room */
                 continue;
             }
