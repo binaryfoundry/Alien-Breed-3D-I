@@ -889,7 +889,7 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
     uint8_t *buf = g_renderer.buffer;
     uint32_t *rgb = g_renderer.rgb_buffer;
     int16_t *depth_buf = g_renderer.depth_buffer;
-    if (!buf || !rgb || !graphic || !depth_buf) return;
+    if (!buf || !rgb || !depth_buf) return;
     if (z <= 0) return;
 
     int16_t half_w = width / 2;
@@ -902,8 +902,10 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
     if (bright > 15) bright = 15;
     int gray = bright * 17; /* 0-255 */
 
-    /* Sprite depth for per-pixel depth test */
+    /* Sprite depth: bias in front so sprites (e.g. switches) on walls consistently
+     * win over the wall and avoid z-fighting. */
     int16_t sprite_z = (z > 32767) ? 32767 : z;
+    int16_t sprite_z_bias = (sprite_z > 16) ? (sprite_z - 16) : 1;
 
     /* Draw the sprite pixel by pixel with scaling */
     int src_w = 32;
@@ -925,21 +927,26 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
             if (screen_col < g_renderer.left_clip ||
                 screen_col >= g_renderer.right_clip) continue;
 
-            if (screen_row < g_renderer.clip.top[screen_col] ||
-                screen_row > g_renderer.clip.bot[screen_col]) continue;
+            /* Don't use column clip for sprites: objects are drawn before this zone's
+             * walls (deferred), so clip would be from a previous zone and can hide
+             * switches. Depth test alone handles occlusion. */
 
-            /* Per-pixel depth test */
-            if (sprite_z >= depth_row[screen_col]) continue;
+            /* Per-pixel depth test: draw when sprite is closer; use biased depth
+             * so sprites on walls win (sprite_z_bias < wall depth). */
+            if (sprite_z_bias >= depth_row[screen_col]) continue;
 
             int src_col = dx * src_w / width;
             if (src_col >= src_w) src_col = src_w - 1;
 
-            uint8_t texel = graphic[src_row * src_w + src_col];
-            if (texel == 0) continue; /* Transparent */
+            uint8_t texel = 0;
+            if (graphic) {
+                texel = graphic[src_row * src_w + src_col];
+                if (texel == 0) continue; /* Transparent */
+            }
 
-            depth_row[screen_col] = sprite_z;
-            row8[screen_col] = texel;
-            /* Without loaded sprite palettes, use a placeholder orange/red */
+            depth_row[screen_col] = sprite_z_bias;
+            row8[screen_col] = graphic ? texel : 1;
+            /* Placeholder when no graphic loaded (switches, pickups, etc.) */
             row32[screen_col] = 0xFF000000u
                 | ((uint32_t)gray << 16) | ((uint32_t)(gray/3) << 8) | 0;
         }
