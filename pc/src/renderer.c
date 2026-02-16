@@ -80,6 +80,9 @@ static const uint16_t wall_scale_table[33] = {
     64*16
 };
 
+/* Water animation: phase 0..255, advance every 2nd frame for a slow cycle. */
+static uint32_t g_water_phase = 0;
+
 /* -----------------------------------------------------------------------
  * Convert a 12-bit Amiga color word (0x0RGB) to ARGB8888.
  * ----------------------------------------------------------------------- */
@@ -809,14 +812,12 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
         int tu = (u_fp >> 16) & 63;
         int tv = (v_fp >> 16) & 63;
 
-        /* Water: gentle bump/ripple from UV (texture-space) so pattern scales with surface */
+        /* Water: slow, smooth scroll only (no noisy ripple). */
         if (is_water) {
-            int u_hi = (u_fp >> 12) & 63;
-            int v_hi = (v_fp >> 12) & 63;
-            int bump_u = ((u_hi + v_hi * 3) & 7) - 3;  /* -3..+3 */
-            int bump_v = ((v_hi - u_hi * 2) & 7) - 3;
-            tu = (tu + bump_u) & 63;
-            tv = (tv + bump_v) & 63;
+            /* Phase 0-255 -> scroll offset 0-63; advance slowly so animation is gentle */
+            int scroll = (int)(g_water_phase >> 2) & 63;
+            tu = (tu + scroll) & 63;
+            tv = (tv + (scroll * 2) & 63) & 63;
         }
 
         /* ASM texture sampling: move.b (a0,d5.w*4),d0
@@ -833,9 +834,11 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
 
             if (rs->floor_pal) {
                 /* Use FloorPalScaled brightness LUT.
-                 * Water: boost brightness so it doesn't look too dark when blended. */
+                 * Water: use a uniform mid brightness so the whole surface is even (no dark/light bands). */
                 int pal_level = amiga_d6 / 2;
-                if (is_water && pal_level < 8) pal_level = 8;  /* minimum brightness for water */
+                if (is_water) {
+                    pal_level = 4;  /* bright water (LUT: low level = brighter) */
+                }
                 if (pal_level > 14) pal_level = 14;
                 const uint8_t *lut = rs->floor_pal + pal_level * 512;
                 uint16_t cw = (uint16_t)((lut[texel * 2] << 8) | lut[texel * 2 + 1]);
@@ -843,7 +846,10 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
             } else {
                 /* Fallback: use texel as grayscale with brightness */
                 int lit = ((int)texel * gray) >> 8;
-                if (is_water && lit < 96) lit = 96;  /* water a bit brighter */
+                if (is_water) {
+                    lit = 200 + (int)(texel * 3 / 4);  /* bright water when no floor pal */
+                    if (lit > 255) lit = 255;
+                }
                 argb = 0xFF000000u | ((uint32_t)lit << 16) | ((uint32_t)lit << 8) | (uint32_t)lit;
             }
         } else {
@@ -851,15 +857,16 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
             argb = 0xFF000000u | ((uint32_t)gray << 16) | ((uint32_t)gray << 8) | (uint32_t)gray;
         }
 
-        /* Water: blend with background (more water than bg so texture reads clearly) */
+        /* Water: blend with background. Use a high water share so brightness is uniform
+         * (otherwise dark/light background shows through and looks patchy). */
         if (is_water) {
             uint32_t bg = row32[x];
             uint32_t br = (bg >> 16) & 0xFF, bg_g = (bg >> 8) & 0xFF, bb = bg & 0xFF;
             uint32_t wr = (argb >> 16) & 0xFF, wg = (argb >> 8) & 0xFF, wb = argb & 0xFF;
-            /* ~60% water, 40% background */
-            uint32_t r = (wr * 154 + br * 102) >> 8;
-            uint32_t g = (wg * 154 + bg_g * 102) >> 8;
-            uint32_t b = (wb * 154 + bb * 102) >> 8;
+            /* ~90% water, 10% background = uniform look, slight transparency */
+            uint32_t r = (wr * 230 + br * 26) >> 8;
+            uint32_t g = (wg * 230 + bg_g * 26) >> 8;
+            uint32_t b = (wb * 230 + bb * 26) >> 8;
             if (r > 255) r = 255;
             if (g > 255) g = 255;
             if (b > 255) b = 255;
@@ -1843,6 +1850,12 @@ void renderer_draw_display(GameState *state)
 
     /* 1. Clear framebuffer */
     renderer_clear(0);
+
+    /* Water: advance phase every 2nd frame, full cycle 0-255 for slow animation */
+    static int water_tick = 0;
+    if ((++water_tick & 1) == 0) {
+        g_water_phase = (g_water_phase + 1) & 255;
+    }
 
     /* 2. Setup view transform (from AB3DI.s DrawDisplay lines 3399-3438) */
     PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
