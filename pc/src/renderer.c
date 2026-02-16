@@ -1402,19 +1402,20 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         if (bright < 0) bright = 0;
         if (bright > 14) bright = 14;
 
-        /* Get Y position from object data
-         * ASM: move.w (a0)+,d2 ; ext.l d2 ; asl.l #7,d2 ; sub.l yoff,d2 ;
-         *      divs d1,d2 ; add.w #39,d2 */
-        int16_t obj_height_raw = rd16(level->object_points + i * 8 + 2);
-        int32_t obj_y_view = ((int32_t)obj_height_raw << 7) - y_off;
-        int scr_y = (int)(obj_y_view / orp->z) + (RENDER_HEIGHT / 2 - 1);
-
         /* Read world-space width/height bytes from object data (offsets 6, 7).
          * ASM: move.b (a0)+,d3; move.b (a0)+,d4; lsl.w #7; divs d1 */
         int world_w = (int)obj[6];
         int world_h = (int)obj[7];
         if (world_w < 1) world_w = 32;
         if (world_h < 1) world_h = 32;
+
+        /* Sprite feet Y: object_points Y is typically the object center (torso); project the
+         * feet (center - half height) so the sprite sits on the floor, not embedded. */
+        int16_t obj_world_y = rd16(level->object_points + i * 8 + 2);
+        int feet_y = (int)obj_world_y - (world_h / 2);  /* feet below center */
+        int32_t rel_h = ((int32_t)feet_y << 6) - (int32_t)y_off;
+        int center = RENDER_HEIGHT / 2;
+        int scr_y = (int)((int64_t)(rel_h >> 8) * 256 / (int32_t)orp->z) + center;
 
         /* Screen pixel size = world_size * 128 / depth (ASM: lsl.w #7; divs d1).
          * Then doubled (ASM: add.w d3,d3; add.w d4,d4). */
