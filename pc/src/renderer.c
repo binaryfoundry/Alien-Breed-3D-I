@@ -28,6 +28,7 @@
 #include "renderer.h"
 #include "math_tables.h"
 #include "game_data.h"
+#include "game_types.h"
 #include "visibility.h"
 #include "stub_audio.h"
 #include <stdlib.h>
@@ -1596,10 +1597,38 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         int half_h = sprite_h / 2;
         int scr_y = floor_screen_y - half_h;
 
-        /* objVectNumber (offset 8) = sprite type; objVectFrameNumber (offset 10) = frame */
+        /* objVectNumber (offset 8) = sprite type; objVectFrameNumber (offset 10) = frame.
+         * At runtime offset 8/10 can be overwritten (e.g. dead_frame_h/l), so fall back to
+         * object type (offset 16) when vect is invalid or sprite missing. */
         int16_t vect_num = rd16(obj + 8);
         int16_t frame_num = rd16(obj + 10);
-
+        int8_t obj_number = obj[16];
+        if (obj_number == OBJ_NBR_DEAD) continue;
+        if (vect_num < 0 || vect_num >= MAX_SPRITE_TYPES ||
+            !r->sprite_wad[vect_num] || !r->sprite_ptr[vect_num]) {
+            /* Use object type -> sprite mapping (matches stub_io sprite order) */
+            switch ((ObjNumber)obj_number) {
+                case OBJ_NBR_ALIEN:           vect_num = 0;  break;
+                case OBJ_NBR_MEDIKIT:         vect_num = 1;  break;
+                case OBJ_NBR_BULLET:          vect_num = 2;  break;
+                case OBJ_NBR_KEY:             vect_num = 5;  break;
+                case OBJ_NBR_PLR1:
+                case OBJ_NBR_PLR2:
+                case OBJ_NBR_MARINE:          vect_num = 10; break;
+                case OBJ_NBR_BIG_NASTY:       vect_num = 11; break;
+                case OBJ_NBR_FLYING_NASTY:    vect_num = 4;  break;
+                case OBJ_NBR_AMMO:            vect_num = 6;  break;
+                case OBJ_NBR_BARREL:          vect_num = 7;  break;
+                case OBJ_NBR_WORM:            vect_num = 13; break;
+                case OBJ_NBR_HUGE_RED_THING:  vect_num = 14; break;
+                case OBJ_NBR_SMALL_RED_THING: vect_num = 15; break;
+                case OBJ_NBR_TREE:            vect_num = 15; break;
+                case OBJ_NBR_TOUGH_MARINE:    vect_num = 16; break;
+                case OBJ_NBR_FLAME_MARINE:    vect_num = 17; break;
+                default:                      vect_num = 0;  break;
+            }
+            frame_num = 0; /* safe default when using type fallback */
+        }
         if (vect_num < 0 || vect_num >= MAX_SPRITE_TYPES) continue;
 
         /* Look up frame info from FRAMES table */
