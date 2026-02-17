@@ -176,6 +176,11 @@ typedef struct {
      * The word is a 12-bit Amiga color (0x0RGB). */
     const uint8_t *wall_palettes[MAX_WALL_TILES];
 
+    /* Wall texture dimensions from loaded file (rows = 1<<wall_valshift[i], valand = rows-1).
+     * Set by io_load_walls from actual file size; 0 means use level data. */
+    uint8_t wall_valand[MAX_WALL_TILES];
+    uint8_t wall_valshift[MAX_WALL_TILES];
+
     /* Current wall palette pointer (set per-wall in draw_zone) */
     const uint8_t *cur_wall_pal;
 

@@ -389,7 +389,7 @@ void play_game(GameState *state)
     io_load_walls();
     io_load_floor();
     io_load_gun_graphics();
-    //io_dump_textures();  /* Debug: write textures/*.bmp for viewing */
+    io_dump_textures();  /* Debug: write textures/*.bmp for viewing */
     io_load_objects();
     io_load_sfx();
 

@@ -539,11 +539,16 @@ static void build_test_level_clips(LevelState *level)
 
 /* Storage for loaded wall texture data (forward declaration for io_shutdown) */
 static uint8_t *g_wall_data[MAX_WALL_TILES];
+/* Actual loaded size per wall (total file size) so dump can use correct pixel dimensions */
+static size_t g_wall_loaded_size[MAX_WALL_TILES];
+
+static void wall_texture_dims_from_size(int index, int pixel_size, int *out_rows, int *out_valshift);
 
 void io_init(void)
 {
     printf("[IO] init\n");
     memset(g_wall_data, 0, sizeof(g_wall_data));
+    memset(g_wall_loaded_size, 0, sizeof(g_wall_loaded_size));
 }
 
 void io_shutdown(void)
@@ -552,6 +557,7 @@ void io_shutdown(void)
     for (int i = 0; i < MAX_WALL_TILES; i++) {
         free(g_wall_data[i]);
         g_wall_data[i] = NULL;
+        g_wall_loaded_size[i] = 0;
     }
     printf("[IO] shutdown\n");
 }
@@ -703,8 +709,11 @@ void io_load_walls(void)
 
     for (int i = 0; i < MAX_WALL_TILES; i++) {
         g_wall_data[i] = NULL;
+        g_wall_loaded_size[i] = 0;
         g_renderer.walltiles[i] = NULL;
         g_renderer.wall_palettes[i] = NULL;
+        g_renderer.wall_valand[i] = 0;
+        g_renderer.wall_valshift[i] = 0;
     }
 
     for (int i = 0; wall_texture_table[i].name; i++) {
@@ -719,15 +728,24 @@ void io_load_walls(void)
         size_t size = 0;
         if (sb_load_file(path, &data, &size) == 0 && data) {
             g_wall_data[i] = data;
+            g_wall_loaded_size[i] = size;
             /* wall_palettes points to the 2048-byte brightness LUT at the
              * START of the .wad data (ASM: PaletteAddr = walltiles[id]).
              * walltiles points past the LUT to the chunky pixel data
              * (ASM: ChunkAddr = walltiles[id] + 64*32). */
             g_renderer.wall_palettes[i] = data;
             g_renderer.walltiles[i] = (size > 2048) ? data + 2048 : data;
+            if (size > 2048) {
+                int pixel_size = (int)(size - 2048);
+                int rows, valshift;
+                wall_texture_dims_from_size(i, pixel_size, &rows, &valshift);
+                g_renderer.wall_valand[i] = (uint8_t)(rows - 1);
+                g_renderer.wall_valshift[i] = (uint8_t)valshift;
+            }
             printf("[IO] Wall %2d: %s (%zu bytes)\n", i,
                    wall_texture_table[i].name, size);
         } else {
+            g_wall_loaded_size[i] = 0;
             printf("[IO] Wall %2d: %s (not found)\n", i,
                    wall_texture_table[i].name);
         }
@@ -969,6 +987,50 @@ void io_load_gun_graphics(void)
  * 16-bit word, vertical strips). Decoded at middle brightness to 32bpp ARGB.
  * Floor: 256×256 8-bit with 4-way interleaving, using floor_pal if loaded.
  * ----------------------------------------------------------------------- */
+/* Override dimensions for textures that infer wrong (e.g. multiple exact fits). -1 = use inferred. */
+static const struct { int index; int cols; int rows; } wall_dump_dim_override[] = {
+    {  6, 195,  64 },  /* rock.wad: 64 rows, 65 strips (8320 bytes; inference ambiguous with 32 rows) */
+    {  8, 126, 128 },  /* BIGDOOR.wad: 128 rows, 42 strips */
+    { 10, 258, 128 },  /* dirt.wad: 128 rows, 86 strips (22016 bytes; inference picks 64) */
+    { 11,  66,  32 },  /* switches.wad: 32 rows, 22 strips (not 33x64) */
+    { 12, 258, 128 },  /* shinymetal.wad: 128 rows, 86 strips */
+    { -1, 0, 0 }
+};
+
+/* Compute wall texture rows and valshift from pixel size (and overrides). Used by load and dump. */
+static void wall_texture_dims_from_size(int index, int pixel_size, int *out_rows, int *out_valshift)
+{
+    for (int o = 0; wall_dump_dim_override[o].index >= 0; o++) {
+        if (wall_dump_dim_override[o].index == index) {
+            *out_rows = wall_dump_dim_override[o].rows;
+            *out_valshift = (*out_rows == 128) ? 7 : (*out_rows == 64) ? 6 : (*out_rows == 32) ? 5 : (*out_rows == 16) ? 4 : 6;
+            return;
+        }
+    }
+    int valshift = -1;
+    for (int vs = 6; vs >= 3; vs--) {
+        int bps = (1 << vs) * 2;
+        if (pixel_size % bps == 0) {
+            valshift = vs;
+            break;
+        }
+    }
+    if (valshift < 0) {
+        int best_strips = 0;
+        for (int vs = 6; vs >= 3; vs--) {
+            int bps = (1 << vs) * 2;
+            int s = pixel_size / bps;
+            if (s > best_strips) {
+                best_strips = s;
+                valshift = vs;
+            }
+        }
+    }
+    if (valshift < 0) valshift = 6;
+    *out_valshift = valshift;
+    *out_rows = 1 << valshift;
+}
+
 static uint32_t amiga12_to_argb(uint16_t w)
 {
     uint32_t r4 = (w >> 8) & 0xF;
@@ -1040,25 +1102,18 @@ void io_dump_textures(void)
         const uint8_t *tex = g_renderer.walltiles[i];
         if (!pal || !tex) continue;
 
-        int pixel_size = wall_texture_table[i].unpacked_size - 2048;
+        /* Use actual loaded size when available so dimensions match the real data. */
+        int pixel_size;
+        if (g_wall_loaded_size[i] > 2048)
+            pixel_size = (int)(g_wall_loaded_size[i] - 2048);
+        else
+            pixel_size = wall_texture_table[i].unpacked_size - 2048;
         if (pixel_size <= 0) continue;
 
-        /* Infer valshift/rows from pixel size so strip count is exact.
-         * bytes_per_strip = (1<<valshift)*2; strips = pixel_size / bytes_per_strip. */
-        int valshift = -1;
-        int bytes_per_strip = 0;
-        for (int vs = 6; vs >= 3; vs--) {
-            int bps = (1 << vs) * 2;
-            if (pixel_size % bps == 0) {
-                valshift = vs;
-                bytes_per_strip = bps;
-                break;
-            }
-        }
-        if (valshift < 0) continue;  /* no exact fit, skip */
-
+        int rows, valshift;
+        wall_texture_dims_from_size(i, pixel_size, &rows, &valshift);
+        int bytes_per_strip = (1 << valshift) * 2;
         int strips = pixel_size / bytes_per_strip;
-        int rows = 1 << valshift;
         int cols = strips * 3;
 
         uint32_t *argb = (uint32_t *)malloc((size_t)cols * rows * sizeof(uint32_t));

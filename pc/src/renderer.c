@@ -1789,6 +1789,13 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 int16_t tex_id = rd16(ptr + 12);
                 const uint8_t *wall_tex = (tex_id >= 0 && tex_id < MAX_WALL_TILES) ? r->walltiles[tex_id] : NULL;
 
+                /* Use dimensions from loaded file when available; else use level data. */
+                uint8_t use_valand = valand, use_valshift = valshift;
+                if (tex_id >= 0 && tex_id < MAX_WALL_TILES && r->wall_valshift[tex_id] != 0) {
+                    use_valand = r->wall_valand[tex_id];
+                    use_valshift = r->wall_valshift[tex_id];
+                }
+
                 /* Amiga: leftwallbright = pointBrightsPtr[pt] + 300 + wallbrightoff.
                  * We use zone_bright + wallbrightoff (no per-vertex brightness yet). */
                 int16_t wall_bright = (int16_t)(zone_bright + wallbrightoff);
@@ -1815,8 +1822,8 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 dw->tex_start  = leftend;
                 dw->tex_end    = rightend;
                 dw->brightness = wall_bright;
-                dw->valand     = valand;
-                dw->valshift   = valshift;
+                dw->valand     = use_valand;
+                dw->valshift   = use_valshift;
                 dw->horand     = horand;
                 dw->tex_id     = tex_id;
                 /* totalyoff is added to tex_y, then masked in draw_wall_column */
