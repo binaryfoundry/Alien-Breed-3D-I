@@ -273,10 +273,15 @@ static bool do_wall_slide(MoveContext *ctx, const uint8_t *fline,
             return false;
         }
 
-        /* Perpendicular distance from slide to wall line - reject if far off. */
+        /* Perpendicular distance from slide to wall line - reject if far off.
+         * When extlen > 0 we trigger collision earlier (inset line), so slide can be
+         * ~extlen from this line; allow that so we don't reject valid slides. */
         int64_t perp = (int64_t)rel_x * (int64_t)lzlen - (int64_t)rel_z * (int64_t)lxlen;
         if (perp < 0) perp = -perp;
-        if (ax + az > 0 && perp > (int64_t)(16 * (ax + az))) return false;
+        int64_t perp_tol = (int64_t)(16 * (ax + az));
+        if (ctx->extlen > 0)
+            perp_tol += (int64_t)ctx->extlen * (int64_t)(ax + az);
+        if (ax + az > 0 && perp > perp_tol) return false;
 
         /* Project slide onto segment: t = (rel . wall) / |wall|^2. Accept only if in [0,1]. */
         t_num = (int64_t)rel_x * lxlen + (int64_t)rel_z * lzlen;
@@ -326,11 +331,24 @@ static int check_wall_line(MoveContext *ctx, LevelState *level,
     int16_t lxlen = (int16_t)read_be16(fline + FLINE_XLEN);
     int16_t lzlen = (int16_t)read_be16(fline + FLINE_ZLEN);
 
+    /* Inset wall line by extlen toward the player (Amiga: extlen in collision keeps player back).
+     * Collide when the player center would cross this inset line; then slide leaves them extlen away. */
+    int32_t wall_len = (int32_t)(int16_t)read_be16(fline + FLINE_LENGTH);
+    if (wall_len <= 0) wall_len = 1;
+    int64_t old_cross = (int64_t)(ctx->oldx - lx) * lzlen - (int64_t)(ctx->oldz - lz) * lxlen;
+    int ext_sign = (old_cross > 0) ? 1 : -1;
+    if (ctx->extlen > 0) {
+        int32_t dx_inset = (int32_t)(ext_sign * (int64_t)ctx->extlen * lzlen / wall_len);
+        int32_t dz_inset = (int32_t)(-ext_sign * (int64_t)ctx->extlen * lxlen / wall_len);
+        lx += dx_inset << ps;
+        lz += dz_inset << ps;
+    }
+
     /* Cross product test: are old and new on opposite sides of this line? */
     int64_t new_cross = (int64_t)(ctx->newx - lx) * lzlen -
                         (int64_t)(ctx->newz - lz) * lxlen;
-    int64_t old_cross = (int64_t)(ctx->oldx - lx) * lzlen -
-                        (int64_t)(ctx->oldz - lz) * lxlen;
+    old_cross = (int64_t)(ctx->oldx - lx) * lzlen -
+                (int64_t)(ctx->oldz - lz) * lxlen;
 
     if ((new_cross ^ old_cross) >= 0) return 0;  /* did not cross */
 
@@ -375,6 +393,13 @@ static int check_wall_line(MoveContext *ctx, LevelState *level,
     /* ---- Wall collision: slide or revert ---- */
     if (do_wall_slide(ctx, fline, lxlen, lzlen, *xdiff, *zdiff,
                       new_cross, ps, slide_no_revert)) {
+        /* Push slide position away from wall by extlen (Amiga keeps player back from wall). */
+        if (ctx->extlen > 0 && wall_len > 0) {
+            int64_t px = (int64_t)ext_sign * (int64_t)ctx->extlen * (int64_t)lzlen / (int64_t)wall_len;
+            int64_t pz = (int64_t)(-ext_sign) * (int64_t)ctx->extlen * (int64_t)lxlen / (int64_t)wall_len;
+            ctx->newx += (int32_t)(px << ps);
+            ctx->newz += (int32_t)(pz << ps);
+        }
         ctx->hitwall = 1;
         *xdiff = ctx->newx - ctx->oldx;
         *zdiff = ctx->newz - ctx->oldz;
