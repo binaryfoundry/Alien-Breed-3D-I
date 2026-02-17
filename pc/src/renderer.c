@@ -134,7 +134,7 @@ static const uint16_t obj_scale_cols[] = {
 };
 #define OBJ_SCALE_COLS_SIZE (sizeof(obj_scale_cols) / sizeof(obj_scale_cols[0]))
 /* Minimum brightness index for sprites so they don't appear pitch-black (0..23 → very dark). */
-#define SPRITE_BRIGHT_MIN 24
+#define SPRITE_BRIGHT_MIN 12
 
 /* Gun ptr frame offsets (GUNS_FRAMES): 8 guns × 4 frames = 32 entries.
  * Each entry is byte offset into gun_ptr for that (gun, frame) column list. */
@@ -1920,6 +1920,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 
                 int edge_extra = full_screen_zone ? ((floor_y_dist < 0) ? CEILING_EDGE_EXTRA : FLOOR_EDGE_EXTRA) : edge_extra_portal;
                 for (int row = row_start; row <= row_end; row++) {
+                    if (row < 0 || row >= RENDER_HEIGHT) { x_fp += dx_fp; continue; }
                     int x = (int)(x_fp >> 16);
                     /* Extend edges only when full screen (avoid drawing outside portal). */
                     int left_x = x - edge_extra;
@@ -1934,9 +1935,12 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 }
             }
 
-            /* Clamp polygon bounds */
+            /* Clamp polygon bounds so row is always in [0, RENDER_HEIGHT-1] */
             if (poly_top < y_min_clamp) poly_top = y_min_clamp;
+            if (poly_top >= RENDER_HEIGHT) poly_top = RENDER_HEIGHT - 1;
             if (poly_bot > y_max_clamp) poly_bot = y_max_clamp;
+            if (poly_bot >= RENDER_HEIGHT) poly_bot = RENDER_HEIGHT - 1;
+            if (poly_bot < 0) poly_bot = -1;
 
             /* Resolve floor texture: floortile + whichtile offset.
              * ASM: move.l floortile,a0 / adda.w whichtile,a0 */
@@ -1953,6 +1957,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
              * Extend each side to close gaps; ceiling uses a bit more (still clamped to clip). */
             int span_extra = (floor_y_dist < 0) ? CEILING_EDGE_EXTRA : FLOOR_EDGE_EXTRA;
             for (int row = poly_top; row <= poly_bot; row++) {
+                if (row < 0 || row >= RENDER_HEIGHT) continue;
                 int16_t le = left_edge[row];
                 int16_t re = right_edge_tab[row];
                 if (le >= RENDER_WIDTH || re < 0) continue;
