@@ -94,6 +94,31 @@ static inline uint32_t amiga12_to_argb(uint16_t w)
     return 0xFF000000u | (r4 * 0x11u << 16) | (g4 * 0x11u << 8) | (b4 * 0x11u);
 }
 
+/* Sprite brightness → palette level mapping (from ObjDraw3.ChipRam.s objscalecols).
+ * Raw brightness d6 (0..61+) maps to palette byte offset (64*level).
+ * dcb.w 2,64*0 / dcb.w 4,64*1 / ... / dcb.w 20,64*14
+ * Index clamped to 0..61; returns byte offset into .pal data. */
+static const uint16_t obj_scale_cols[] = {
+    64*0,  64*0,                                                   /* d6=0..1 */
+    64*1,  64*1,  64*1,  64*1,                                     /* d6=2..5 */
+    64*2,  64*2,  64*2,  64*2,                                     /* d6=6..9 */
+    64*3,  64*3,  64*3,  64*3,                                     /* d6=10..13 */
+    64*4,  64*4,  64*4,  64*4,                                     /* d6=14..17 */
+    64*5,  64*5,  64*5,  64*5,                                     /* d6=18..21 */
+    64*6,  64*6,  64*6,  64*6,                                     /* d6=22..25 */
+    64*7,  64*7,  64*7,  64*7,                                     /* d6=26..29 */
+    64*8,  64*8,  64*8,  64*8,                                     /* d6=30..33 */
+    64*9,  64*9,  64*9,  64*9,                                     /* d6=34..37 */
+    64*10, 64*10, 64*10, 64*10,                                    /* d6=38..41 */
+    64*11, 64*11, 64*11, 64*11,                                    /* d6=42..45 */
+    64*12, 64*12, 64*12, 64*12,                                    /* d6=46..49 */
+    64*13, 64*13, 64*13, 64*13,                                    /* d6=50..53 */
+    64*14, 64*14, 64*14, 64*14, 64*14, 64*14, 64*14, 64*14,       /* d6=54..61 */
+    64*14, 64*14, 64*14, 64*14, 64*14, 64*14, 64*14, 64*14,
+    64*14, 64*14, 64*14, 64*14
+};
+#define OBJ_SCALE_COLS_SIZE (sizeof(obj_scale_cols) / sizeof(obj_scale_cols[0]))
+
 /* Gun ptr frame offsets (GUNS_FRAMES): 8 guns × 4 frames = 32 entries.
  * Each entry is byte offset into gun_ptr for that (gun, frame) column list. */
 #define GUN_COLS 96
@@ -938,18 +963,22 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
     if (src_cols < 1) src_cols = 32;
     if (src_rows < 1) src_rows = 32;
 
+    /* ASM: sub.w d3,d0 (left = center_x - half_w) before doubling d3.
+     * ASM: sub.w d4,d2 (top = center_y - half_h) before doubling d4.
+     * width/height passed in are already doubled (full size). */
     int16_t half_w = width / 2;
+    int16_t half_h = height / 2;
     int sx = screen_x - half_w;
-    int sy = screen_y - height;
+    int sy = screen_y - half_h;
 
-    /* Brightness → palette level (0-14). Level N = offset N*64 in .pal.
-     * .pal can be 64 bytes (one level) or 15*64=960 bytes (15 levels). */
-    int bright = brightness;
-    if (bright < 0) bright = 0;
-    if (bright > 14) bright = 14;
-    uint32_t pal_level_off = (uint32_t)bright * 64;
+    /* Brightness → palette byte offset via objscalecols (ObjDraw3.ChipRam.s line 572).
+     * Raw d6 = (z>>7) + obj_bright is passed in as 'brightness'. */
+    int bright_idx = brightness;
+    if (bright_idx < 0) bright_idx = 0;
+    if (bright_idx >= (int)OBJ_SCALE_COLS_SIZE) bright_idx = (int)OBJ_SCALE_COLS_SIZE - 1;
+    uint32_t pal_level_off = obj_scale_cols[bright_idx];
     if (pal && pal_size < 960) pal_level_off = 0;  /* single-level or small palette */
-    int gray = bright * 17;
+    int gray = (bright_idx * 255) / 62;
 
     /* Sprite depth: bias in front so sprites on walls win z-fighting. */
     int16_t sprite_z = (z > 32767) ? 32767 : (int16_t)z;
@@ -1399,24 +1428,28 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         if (orp->z < 50) continue; /* Too close / behind (ASM: cmp.w #50,d1) */
 
         /* Project Y boundaries from room top/bottom
-         * ASM: ty3d (top) / by3d (bottom) divided by depth + 40 */
-        int32_t clip_top_y = (top_of_room - y_off) * RENDER_SCALE / orp->z + (RENDER_HEIGHT / 2);
-        int32_t clip_bot_y = (bot_of_room - y_off) * RENDER_SCALE / orp->z + (RENDER_HEIGHT / 2);
+         * ASM: ty3d/by3d: (room_height - yoff) / z + 40 */
+        int32_t clip_top_amiga = (top_of_room - y_off) / orp->z + 40;
+        int32_t clip_bot_amiga = (bot_of_room - y_off) / orp->z + 40;
+        int32_t clip_top_y = clip_top_amiga * RENDER_SCALE;
+        int32_t clip_bot_y = clip_bot_amiga * RENDER_SCALE;
         if (clip_top_y >= clip_bot_y) continue;
 
         /* Project to screen X:
-         * ASM: divs d1,d0 ; add.w #47,d0 (47 = RENDER_WIDTH/2 - 1) */
+         * ASM: divs d1,d0 ; add.w #47,d0 */
         int32_t obj_vx_fine = orp->x_fine;
-        int scr_x = (int)(obj_vx_fine * RENDER_SCALE / orp->z) + (RENDER_WIDTH / 2);
+        int scr_x_amiga = (int)(obj_vx_fine / orp->z) + 47;
+        int scr_x = scr_x_amiga * RENDER_SCALE;
 
         const uint8_t *obj = level->object_data + i * OBJECT_SIZE;
 
         /* Get brightness + distance attenuation
          * ASM: asr.w #7,d6 ; add.w (a0)+,d6 (distance>>7 + obj brightness) */
+        /* Raw brightness d6 = (z >> 7) + objVectBright.
+         * Passed to renderer_draw_sprite which uses objscalecols to map to palette level. */
         int16_t obj_bright = rd16(obj + 2);  /* objVectBright */
         int bright = (orp->z >> 7) + obj_bright;
         if (bright < 0) bright = 0;
-        if (bright > 14) bright = 14;
 
         /* Read world-space width/height bytes from object data (offsets 6, 7).
          * ASM: move.b (a0)+,d3; move.b (a0)+,d4; lsl.w #7; divs d1 */
@@ -1425,29 +1458,32 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         if (world_w < 1) world_w = 32;
         if (world_h < 1) world_h = 32;
 
-        /* Sprite feet Y: object_points Y is typically the object center (torso); project the
-         * feet (center - half height) so the sprite sits on the floor, not embedded. */
-        int16_t obj_world_y = rd16(level->object_points + i * 8 + 2);
-        int feet_y = (int)obj_world_y - (world_h / 2);  /* feet below center */
-        int32_t rel_h = ((int32_t)feet_y << 6) - (int32_t)y_off;
-        int center = RENDER_HEIGHT / 2;
-        int scr_y = (int)((int64_t)(rel_h >> 8) * 256 * RENDER_SCALE / (int32_t)orp->z) + center;
+        /* Sprite Y projection: exact ASM (ObjDraw3 line 598-603):
+         *   d2 = obj_y (word from ObjectData offset 4)
+         *   ext.l d2; asl.l #7,d2
+         *   sub.l yoff,d2
+         *   divs d1,d2       → (obj_y << 7 - yoff) / z
+         *   add.w #39,d2     → screen Y center of sprite */
+        int16_t obj_y_word = rd16(obj + 4);
+        int32_t rel_y = ((int32_t)obj_y_word << 7) - (int32_t)y_off;
+        int scr_y_amiga = (int)(rel_y / (int32_t)orp->z) + 39;
+        int scr_y = scr_y_amiga * RENDER_SCALE;
 
-        /* Screen pixel size = world_size * 128 / depth (ASM: lsl.w #7; divs d1).
-         * Then doubled (ASM: add.w d3,d3; add.w d4,d4).
-         * Scale by RENDER_SCALE for doubled resolution. */
-        int sprite_w = world_w * 128 * RENDER_SCALE / orp->z;
-        int sprite_h = world_h * 128 * RENDER_SCALE / orp->z;
-        sprite_w *= 2;
-        sprite_h *= 2;
+        /* Screen pixel size: exact ASM (lines 620-623):
+         *   lsl.w #7,d3; divs d1,d3  → half_w = world_w * 128 / z
+         *   lsl.w #7,d4; divs d1,d4  → half_h = world_h * 128 / z
+         * Then doubled: add.w d3,d3; add.w d4,d4 */
+        int half_w_amiga = world_w * 128 / orp->z;
+        int half_h_amiga = world_h * 128 / orp->z;
+        int sprite_w = half_w_amiga * 2 * RENDER_SCALE;
+        int sprite_h = half_h_amiga * 2 * RENDER_SCALE;
         if (sprite_w < 1) sprite_w = 1;
         if (sprite_h < 1) sprite_h = 1;
         if (sprite_w > RENDER_WIDTH) sprite_w = RENDER_WIDTH;
         if (sprite_h > RENDER_HEIGHT) sprite_h = RENDER_HEIGHT;
 
-        /* scr_y = projected screen Y of object base (feet). ASM: sub.w d4,d2 makes d2 = top.
-         * We pass bottom (feet) to renderer_draw_sprite; it uses sy = screen_y - height = top. */
-        /* (no offset: keep scr_y as feet position) */
+        /* scr_y = projected center Y of sprite. renderer_draw_sprite subtracts half_h
+         * to get top, then draws full height downward. Matches ASM sub.w d4,d2 before double. */
 
         /* Source dimensions: columns and rows from object data offsets 14, 15.
          * These define how many columns in the PTR table to span and how many
@@ -1473,13 +1509,11 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
             down_strip = ft[frame_num].down_strip;
         }
 
-        /* Use dedicated .pal if loaded; else use first 2048 bytes of .wad as LUT (like wall tiles). */
+        /* Use dedicated .pal if loaded; no fallback to WAD header because
+         * sprite .pal format (15 levels × 32 × 2 bytes = 960) differs from
+         * the wall LUT format in the WAD header (17 blocks × 32 × 2 = 2048). */
         const uint8_t *obj_pal = r->sprite_pal_data[vect_num];
         size_t obj_pal_size = r->sprite_pal_size[vect_num];
-        if (!obj_pal && r->sprite_wad[vect_num] && r->sprite_wad_size[vect_num] >= 2048) {
-            obj_pal = r->sprite_wad[vect_num];
-            obj_pal_size = 2048;
-        }
 
         renderer_draw_sprite((int16_t)scr_x, (int16_t)scr_y,
                              (int16_t)sprite_w, (int16_t)sprite_h,
