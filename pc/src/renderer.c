@@ -192,11 +192,22 @@ void renderer_clear(uint8_t color)
     if (g_renderer.buffer) {
         memset(g_renderer.buffer, color, RENDER_BUF_SIZE);
     }
-    /* Clear rgb_buffer to opaque black */
+    /* Clear rgb_buffer: sky above horizon, black below (floor/walls overwrite). */
     if (g_renderer.rgb_buffer) {
-        size_t n = (size_t)RENDER_WIDTH * RENDER_HEIGHT;
         uint32_t *p = g_renderer.rgb_buffer;
-        for (size_t i = 0; i < n; i++) p[i] = 0xFF000000u;
+        int center = RENDER_HEIGHT / 2;
+        /* Sky: off-white for now (Amiga had BackPicture / putinbackdrop). */
+        const uint32_t sky = 0xFFEEEEEEu;  /* ARGB - a shade darker than white */
+        for (int y = 0; y < center; y++) {
+            for (int x = 0; x < RENDER_WIDTH; x++) {
+                p[y * RENDER_WIDTH + x] = sky;
+            }
+        }
+        for (int y = center; y < RENDER_HEIGHT; y++) {
+            for (int x = 0; x < RENDER_WIDTH; x++) {
+                p[y * RENDER_WIDTH + x] = 0xFF000000u;
+            }
+        }
     }
 }
 
