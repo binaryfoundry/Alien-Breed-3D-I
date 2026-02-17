@@ -19,8 +19,8 @@ static SDL_Window   *g_window   = NULL;
 static SDL_Renderer *g_sdl_ren  = NULL;
 static SDL_Texture  *g_texture  = NULL;
 
-/* Scale factor for the window (the game renders at 96x80). */
-#define WINDOW_SCALE  8
+/* Scale factor for the window. Halved when RENDER_SCALE doubles so window size stays the same. */
+#define WINDOW_SCALE  4
 #define WINDOW_H      (RENDER_HEIGHT * WINDOW_SCALE)
 #define WINDOW_W      (WINDOW_H * 4 / 3)   /* 4:3 aspect ratio */
 
