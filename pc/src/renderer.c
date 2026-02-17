@@ -39,12 +39,10 @@
  * At RENDER_SCALE we have 96*RENDER_SCALE columns, so step must be (d1>>6)/RENDER_SCALE
  * to keep the same total U range. Integer: use shift 6 + RENDER_SCALE_LOG2. */
 #define FLOOR_STEP_SHIFT  (6 + RENDER_SCALE_LOG2)
-/* Pixels to extend floor/ceiling edges and spans (clamped to zone clip). Use 1 to avoid drawing into portals. */
-#define FLOOR_EDGE_EXTRA  1
-/* Ceiling needs a bit more extension to close gaps at sides (still clamped to clip). */
-#define CEILING_EDGE_EXTRA 2
-/* In portal view use 1px to close sub-pixel gaps without drawing outside. */
-#define PORTAL_EDGE_EXTRA 1
+/* Extra pixels to extend floor/ceiling beyond polygon edge (0 = strict bounds; 1 = close sub-pixel gaps). */
+#define FLOOR_EDGE_EXTRA  0
+#define CEILING_EDGE_EXTRA 0
+#define PORTAL_EDGE_EXTRA 0
 
 /* Raise view height for rendering only (gameplay uses plr->yoff unchanged).
  * Makes the camera draw from higher so the floor appears further away, matching Amiga. */
@@ -2025,16 +2023,12 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
              * ASM: move.w (a0)+,d6 / add.w ZoneBright,d6 */
             int16_t bright = zone_bright + floor_bright_off;
 
-            /* Fill between edges for each row (floor and ceiling/roof). Clamp to zone clip.
-             * Extend each side to close gaps; ceiling uses a bit more (still clamped to clip). */
-            int span_extra = (floor_y_dist < 0) ? CEILING_EDGE_EXTRA : FLOOR_EDGE_EXTRA;
+            /* Fill between edges for each row (floor and ceiling/roof). Clamp to zone clip. */
             for (int row = poly_top; row <= poly_bot; row++) {
                 if (row < 0 || row >= RENDER_HEIGHT) continue;
                 int16_t le = left_edge[row];
                 int16_t re = right_edge_tab[row];
                 if (le >= RENDER_WIDTH || re < 0) continue;
-                le -= span_extra;
-                re += span_extra;
                 if (le < r->left_clip) le = (int16_t)r->left_clip;
                 if (re >= r->right_clip) re = (int16_t)(r->right_clip - 1);
                 if (le > re) continue;
