@@ -50,7 +50,7 @@ typedef struct {
 
 typedef struct {
     int16_t x;       /* View-space X (16-bit) */
-    int16_t z;       /* View-space Z (depth, 16-bit) */
+    int32_t z;       /* View-space Z (depth, 32-bit so far sprites scale) */
     int32_t x_fine;  /* View-space X (high precision for xwobble) */
 } ObjRotatedPoint;
 

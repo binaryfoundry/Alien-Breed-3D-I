@@ -348,9 +348,12 @@ void objects_update(GameState *state)
         }
         obj->obj.worry--;
 
-        /* Update rendering Y position from zone floor height (Anims.s: every handler
-         * writes 4(a0) = (ToZoneFloor >> 7) - 60 so sprites project at the correct
-         * vertical position).  Without this, obj[4] stays at its level-load value. */
+        /* Update rendering Y position from zone floor height.
+         * Anims.s: each handler writes 4(a0) = (ToZoneFloor >> 7) - offset.
+         * The offset is per-type; barrel uses -60 (= its world_h).
+         * Generic formula: obj[4] = (floor >> 7) - world_h, so that
+         *   scr_y + half_h ≈ floor_screen_y  (sprite bottom sits on floor).
+         * Proof: (obj[4]<<7 + world_h*128) = floor, matching the floor projection. */
         {
             int16_t obj_zone = OBJ_ZONE(obj);
             if (obj_zone >= 0 && state->level.zone_adds && state->level.data) {
@@ -358,7 +361,9 @@ void objects_update(GameState *state)
                 if (zo > 0) {
                     const uint8_t *zd = state->level.data + zo;
                     int32_t floor_h = be32(zd + 2);  /* ToZoneFloor */
-                    int16_t render_y = (int16_t)((floor_h >> 7) - 60);
+                    int world_h = (int)(uint8_t)obj->raw[7];
+                    if (world_h < 1) world_h = 32;
+                    int16_t render_y = (int16_t)((floor_h >> 7) - world_h);
                     obj_sw(obj->raw + 4, render_y);
                 }
             }

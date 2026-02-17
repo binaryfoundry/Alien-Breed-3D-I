@@ -123,6 +123,8 @@ static const uint16_t obj_scale_cols[] = {
     64*14, 64*14, 64*14, 64*14
 };
 #define OBJ_SCALE_COLS_SIZE (sizeof(obj_scale_cols) / sizeof(obj_scale_cols[0]))
+/* Minimum brightness index for sprites so they don't appear pitch-black (0..23 → very dark). */
+#define SPRITE_BRIGHT_MIN 24
 
 /* Gun ptr frame offsets (GUNS_FRAMES): 8 guns × 4 frames = 32 entries.
  * Each entry is byte offset into gun_ptr for that (gun, frame) column list. */
@@ -372,21 +374,13 @@ void renderer_rotate_object_pts(GameState *state)
     if (num_pts > MAX_OBJ_POINTS) num_pts = MAX_OBJ_POINTS;
 
     const uint8_t *pts = state->level.object_points;
-    const uint8_t *obj_data = state->level.object_data;
 
-    for (int i = 0; i < num_pts; i++) {
-        /* Check if object exists (zone >= 0) */
-        const uint8_t *obj = obj_data + i * OBJECT_SIZE;
-        int16_t zone = rd16(obj + 12);
-        if (zone < 0) {
-            r->obj_rotated[i].x = 0;
-            r->obj_rotated[i].z = 0;
-            r->obj_rotated[i].x_fine = 0;
-            continue;
-        }
-
-        int16_t px = rd16(pts + i * 8);
-        int16_t pz = rd16(pts + i * 8 + 4);
+    /* Amiga ObjDraw: ObjRotated is indexed by POINT number, not object index.
+     * Rotate every point; when drawing, object uses (object_data[0]) as pt num
+     * to look up ObjRotated[pt_num]. So keys (and others) scale correctly. */
+    for (int pt = 0; pt < num_pts; pt++) {
+        int16_t px = rd16(pts + pt * 8);
+        int16_t pz = rd16(pts + pt * 8 + 4);
 
         int16_t dx = (int16_t)(px - cam_x);
         int16_t dz = (int16_t)(pz - cam_z);
@@ -398,14 +392,14 @@ void renderer_rotate_object_pts(GameState *state)
 
         int32_t vz = (int32_t)dx * sin_v + (int32_t)dz * cos_v;
         vz <<= 2;
-        int16_t vz16 = (int16_t)(vz >> 16);
+        int16_t vz16 = (int16_t)(vz >> 16);  /* for divs-style use; keep 32-bit for size */
 
         int32_t vx_fine = (int32_t)vx16 << 7;
         vx_fine += r->xwobble;
 
-        r->obj_rotated[i].x = vx16;
-        r->obj_rotated[i].z = vz16;
-        r->obj_rotated[i].x_fine = vx_fine;
+        r->obj_rotated[pt].x = vx16;
+        r->obj_rotated[pt].z = (int32_t)(vz >> 16);
+        r->obj_rotated[pt].x_fine = vx_fine;
     }
 }
 
@@ -977,43 +971,72 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
     int sy = screen_y - half_h;
 
     /* Brightness → palette byte offset via objscalecols (ObjDraw3.ChipRam.s line 572).
-     * Raw d6 = (z>>7) + obj_bright is passed in as 'brightness'. */
+     * Raw d6 = (z>>7) + obj_bright is passed in as 'brightness'.
+     * Apply a minimum so sprites stay visible (original often too dark on PC). */
     int bright_idx = brightness;
     if (bright_idx < 0) bright_idx = 0;
+    if (bright_idx < SPRITE_BRIGHT_MIN) bright_idx = SPRITE_BRIGHT_MIN;
     if (bright_idx >= (int)OBJ_SCALE_COLS_SIZE) bright_idx = (int)OBJ_SCALE_COLS_SIZE - 1;
     uint32_t pal_level_off = obj_scale_cols[bright_idx];
     if (pal && pal_size < 960) pal_level_off = 0;  /* single-level or small palette */
     int gray = (bright_idx * 255) / 62;
+    if (gray < 90) gray = 90;  /* floor so no-palette / fallback path stays visible */
 
     /* Sprite depth: bias in front so sprites on walls win z-fighting. */
     int16_t sprite_z = (z > 32767) ? 32767 : (int16_t)z;
     int16_t sprite_z_bias = (sprite_z > 16) ? (sprite_z - 16) : 1;
 
     /* Draw column-by-column (matching Amiga's column-strip approach).
-     * For each screen column, find the source column in the PTR table,
-     * then draw all rows from the packed WAD data. */
+     * ObjDraw3.ChipRam.s lines 651-671: Amiga uses 2*src_cols and 2*src_rows when
+     * computing consttab indices (add.w d6,d6 after move.b 6(a0),d6 and 7(a0),d6).
+     * So the texture is sampled over the full width/height with effective dimensions
+     * twice the object bytes at 14/15 - otherwise only top-left quadrant is used. */
+    int eff_cols = src_cols * 2;
+    int eff_rows = src_rows * 2;
+    uint32_t max_col = (ptr_size > ptr_offset) ? (ptr_size - ptr_offset) / 4u : 0;
+
+    /* When a PTR entry has wad_off==0 or we're past the frame, reuse previous column
+     * so we don't get occasional blank vertical strips. */
+    uint8_t last_mode = 0;
+    uint32_t last_wad_off = 0;
+    const uint8_t *last_src = NULL;
+
     for (int dx = 0; dx < width; dx++) {
         int screen_col = sx + dx;
         if (screen_col < g_renderer.left_clip ||
             screen_col >= g_renderer.right_clip) continue;
 
-        /* Map screen column to source column */
-        int src_col = dx * src_cols / width;
-        if (src_col >= src_cols) src_col = src_cols - 1;
+        /* Map screen column to source column (full texture range) */
+        int src_col = (width > 1) ? (dx * eff_cols / width) : 0;
+        if (src_col >= eff_cols) src_col = eff_cols - 1;
+        /* Clamp to valid PTR range instead of skipping (avoids blank columns) */
+        if (max_col > 0 && (uint32_t)src_col >= max_col) src_col = (int)(max_col - 1);
 
         /* Read PTR entry for this source column */
         uint32_t entry_off = ptr_offset + (uint32_t)src_col * 4;
-        if (entry_off + 4 > ptr_size) continue;
+        if (entry_off + 4 > ptr_size) {
+            if (last_src == NULL) continue;
+            /* Reuse previous column */
+        } else {
+            const uint8_t *entry = ptr_data + entry_off;
+            uint8_t mode = entry[0];
+            uint32_t wad_off = ((uint32_t)entry[1] << 16)
+                             | ((uint32_t)entry[2] << 8)
+                             | (uint32_t)entry[3];
+            if (wad_off == 0 || wad_off >= wad_size) {
+                if (last_src == NULL) continue;
+                /* Reuse previous column */
+            } else {
+                last_mode = mode;
+                last_wad_off = wad_off;
+                last_src = wad + wad_off;
+            }
+        }
 
-        const uint8_t *entry = ptr_data + entry_off;
-        uint8_t mode = entry[0];
-        uint32_t wad_off = ((uint32_t)entry[1] << 16)
-                         | ((uint32_t)entry[2] << 8)
-                         | (uint32_t)entry[3];
-        if (wad_off == 0) continue;  /* blank column */
-        if (wad_off >= wad_size) continue;
-
-        const uint8_t *src = wad + wad_off;
+        uint8_t mode = last_mode;
+        uint32_t wad_off = last_wad_off;
+        const uint8_t *src = last_src;
+        if (src == NULL) continue;
 
         for (int dy = 0; dy < height; dy++) {
             int screen_row = sy + dy;
@@ -1022,23 +1045,23 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
             if (sprite_z_bias >= depth_buf[screen_row * RENDER_WIDTH + screen_col])
                 continue;
 
-            /* Map screen row to source row, add down_strip */
-            int src_row = dy * src_rows / height;
-            if (src_row >= src_rows) src_row = src_rows - 1;
+            /* Map screen row to source row (full texture range), add down_strip */
+            int src_row = (height > 1) ? (dy * eff_rows / height) : 0;
+            if (src_row >= eff_rows) src_row = eff_rows - 1;
             int row_idx = (int)down_strip + src_row;
 
             /* Bounds check: each row is 2 bytes (one 16-bit word) */
             if (wad_off + (size_t)(row_idx + 1) * 2 > wad_size) continue;
 
-            /* Decode 5-bit pixel from packed word (same as gun renderer) */
+            /* Decode 5-bit pixel from packed word (match gun: build 16-bit word big-endian). */
+            uint16_t w = (uint16_t)((src[row_idx * 2] << 8) | src[row_idx * 2 + 1]);
             uint8_t texel = 0;
             if (mode == 0) {
-                texel = src[row_idx * 2 + 1] & 0x1F;
+                texel = (uint8_t)(w & 0x1F);
             } else if (mode == 1) {
-                uint16_t w = (uint16_t)((src[row_idx * 2] << 8) | src[row_idx * 2 + 1]);
                 texel = (uint8_t)((w >> 5) & 0x1F);
             } else {
-                texel = (src[row_idx * 2] >> 2) & 0x1F;
+                texel = (uint8_t)((w >> 10) & 0x1F);
             }
             if (texel == 0) continue;  /* transparent */
 
@@ -1050,7 +1073,7 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
             row8[screen_col] = texel;
 
             /* Color from .pal brightness palette (15 levels × 64 bytes or single 64-byte block).
-             * Amiga .pal is typically big-endian 12-bit words; try both orders if colors look wrong. */
+             * Amiga .pal is big-endian 12-bit words. Try little-endian if colors look wrong. */
             if (pal && pal_size >= 64) {
                 uint32_t level_off = (pal_level_off + 64 <= pal_size) ? pal_level_off : 0;
                 uint32_t ci = level_off + (uint32_t)texel * 2;
@@ -1058,13 +1081,15 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
                     uint16_t cw = (uint16_t)((pal[ci] << 8) | pal[ci + 1]);
                     row32[screen_col] = amiga12_to_argb(cw);
                 } else {
+                    int shade = (gray * (int)texel) / 31;
                     row32[screen_col] = 0xFF000000u
-                        | ((uint32_t)gray << 16) | ((uint32_t)gray << 8) | (uint32_t)gray;
+                        | ((uint32_t)shade << 16) | ((uint32_t)shade << 8) | (uint32_t)shade;
                 }
             } else {
-                /* No palette: neutral gray (was orange/brown before) */
+                /* No palette: use texel for shading so sprite shape is visible */
+                int shade = (gray * (int)texel) / 31;
                 row32[screen_col] = 0xFF000000u
-                    | ((uint32_t)gray << 16) | ((uint32_t)gray << 8) | (uint32_t)gray;
+                    | ((uint32_t)shade << 16) | ((uint32_t)shade << 8) | (uint32_t)shade;
             }
         }
     }
@@ -1373,31 +1398,33 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
     int32_t y_off = r->yoff;
 
     /* Build depth-sorted list of objects in this zone */
-    typedef struct { int idx; int16_t z; } ObjEntry;
+    typedef struct { int idx; int32_t z; } ObjEntry;
     ObjEntry objs[80];
     int obj_count = 0;
 
-    int num = level->num_object_points;
-    if (num > MAX_OBJ_POINTS) num = MAX_OBJ_POINTS;
+    int num_pts = level->num_object_points;
+    if (num_pts > MAX_OBJ_POINTS) num_pts = MAX_OBJ_POINTS;
 
-    for (int i = 0; i < num && obj_count < 80; i++) {
-        const uint8_t *obj = level->object_data + i * OBJECT_SIZE;
-        int16_t obj_type = rd16(obj);
-        if (obj_type < 0) break; /* End of list */
+    /* Iterate by object index; each object has point number at offset 0 (ObjDraw: move.w (a0)+,d0).
+     * Use that to look up ObjRotated[pt_num] so keys and other pickups use correct position/z. */
+    for (int obj_idx = 0; obj_idx < 80 && obj_count < 80; obj_idx++) {
+        const uint8_t *obj = level->object_data + obj_idx * OBJECT_SIZE;
+        int16_t pt_num = rd16(obj);
+        if (pt_num < 0) break; /* End of object list */
 
-        /* Which zone draws this object: use GraphicRoom (offset 26) and/or zone (offset 12).
-         * Draw when either valid field matches current zone so pickups/enemies show even if
-         * only one is set in level data. */
+        if ((unsigned)pt_num >= (unsigned)num_pts) continue; /* invalid point number */
+
+        /* Which zone draws this object */
         int16_t graphic_room = rd16(obj + 26);
         int16_t obj_zone = rd16(obj + 12);
         int in_this_zone = (graphic_room >= 0 && graphic_room == (int16_t)zone_id)
                            || (obj_zone >= 0 && obj_zone == (int16_t)zone_id);
         if (!in_this_zone) continue;
 
-        ObjRotatedPoint *orp = &r->obj_rotated[i];
+        ObjRotatedPoint *orp = &r->obj_rotated[pt_num];
         if (orp->z <= 0) continue; /* Behind camera */
 
-        objs[obj_count].idx = i;
+        objs[obj_count].idx = obj_idx;
         objs[obj_count].z = orp->z;
         obj_count++;
     }
@@ -1427,10 +1454,15 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
      *   Offset 26: GraphicRoom (word)
      */
     for (int oi = 0; oi < obj_count; oi++) {
-        int i = objs[oi].idx;
-        ObjRotatedPoint *orp = &r->obj_rotated[i];
+        int obj_idx = objs[oi].idx;
+        const uint8_t *obj = level->object_data + obj_idx * OBJECT_SIZE;
+        int16_t pt_num = rd16(obj);
+        if ((unsigned)pt_num >= (unsigned)num_pts) continue;
+        ObjRotatedPoint *orp = &r->obj_rotated[pt_num];
 
-        if (orp->z < 50) continue; /* Too close / behind (ASM: cmp.w #50,d1) */
+        /* Use actual view Z for size so sprites scale at all distances. Guard only vs div-by-zero. */
+        int32_t z_for_size = orp->z;
+        if (z_for_size < 1) z_for_size = 1;
 
         /* Project Y boundaries from room top/bottom
          * ASM: ty3d/by3d: (room_height - yoff) / z + 40 */
@@ -1443,10 +1475,8 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         /* Project to screen X:
          * ASM: divs d1,d0 ; add.w #47,d0 */
         int32_t obj_vx_fine = orp->x_fine;
-        int scr_x_amiga = (int)(obj_vx_fine / orp->z) + 47;
+        int scr_x_amiga = (int)(obj_vx_fine / (int32_t)orp->z) + 47;
         int scr_x = scr_x_amiga * RENDER_SCALE;
-
-        const uint8_t *obj = level->object_data + i * OBJECT_SIZE;
 
         /* Get brightness + distance attenuation
          * ASM: asr.w #7,d6 ; add.w (a0)+,d6 (distance>>7 + obj brightness) */
@@ -1457,38 +1487,31 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         if (bright < 0) bright = 0;
 
         /* Read world-space width/height bytes from object data (offsets 6, 7).
-         * ASM: move.b (a0)+,d3; move.b (a0)+,d4; lsl.w #7; divs d1 */
+         * ASM: move.b (a0)+,d3; move.b (a0)+,d4; lsl.w #7; divs d1
+         * 0xFF (255) in level data often means "default" not 255 units - use 32 so
+         * sprites (e.g. keys) scale with distance instead of staying huge. */
         int world_w = (int)obj[6];
         int world_h = (int)obj[7];
-        if (world_w < 1) world_w = 32;
-        if (world_h < 1) world_h = 32;
+        if (world_w < 1 || world_w >= 255) world_w = 32;
+        if (world_h < 1 || world_h >= 255) world_h = 32;
 
-        /* Sprite Y projection: exact ASM (ObjDraw3 line 598-603):
-         *   d2 = obj_y (word from ObjectData offset 4)
-         *   ext.l d2; asl.l #7,d2
-         *   sub.l yoff,d2
-         *   divs d1,d2       → (obj_y << 7 - yoff) / z
-         *   add.w #39,d2     → screen Y center of sprite */
-        int16_t obj_y_word = rd16(obj + 4);
-        int32_t rel_y = ((int32_t)obj_y_word << 7) - (int32_t)y_off;
-        int scr_y_amiga = (int)(rel_y / (int32_t)orp->z) + 39;
-        int scr_y = scr_y_amiga * RENDER_SCALE;
-
-        /* Screen pixel size: exact ASM (lines 620-623):
-         *   lsl.w #7,d3; divs d1,d3  → half_w = world_w * 128 / z
-         *   lsl.w #7,d4; divs d1,d4  → half_h = world_h * 128 / z
-         * Then doubled: add.w d3,d3; add.w d4,d4 */
-        int half_w_amiga = world_w * 128 / orp->z;
-        int half_h_amiga = world_h * 128 / orp->z;
-        int sprite_w = half_w_amiga * 2 * RENDER_SCALE;
-        int sprite_h = half_h_amiga * 2 * RENDER_SCALE;
+        /* Screen pixel size: exact ASM (lines 620-623).
+         * Full size in Amiga pixels = 2 * (world * 128 / z). Use z_for_size so when
+         * very close (z < 50) we don't blow up or disappear - cap gives stable max size. */
+        int sprite_w = (int)((int32_t)world_w * 256 * (int32_t)RENDER_SCALE / z_for_size);
+        int sprite_h = (int)((int32_t)world_h * 256 * (int32_t)RENDER_SCALE / z_for_size);
         if (sprite_w < 1) sprite_w = 1;
         if (sprite_h < 1) sprite_h = 1;
         if (sprite_w > RENDER_WIDTH) sprite_w = RENDER_WIDTH;
         if (sprite_h > RENDER_HEIGHT) sprite_h = RENDER_HEIGHT;
 
-        /* scr_y = projected center Y of sprite. renderer_draw_sprite subtracts half_h
-         * to get top, then draws full height downward. Matches ASM sub.w d4,d2 before double. */
+        /* Sprite Y: place base on zone floor so feet sit on the ground.
+         * Floor projects at (floor - y_off) / z + 40 (Amiga) → floor_screen_y in our resolution.
+         * We pass center to renderer_draw_sprite (it does sy = center - half_h), so center = floor_screen_y - half_h. */
+        int32_t floor_rel = (int32_t)(bot_of_room - y_off);
+        int floor_screen_y = (int)(floor_rel * (int32_t)RENDER_SCALE / orp->z) + (RENDER_HEIGHT / 2);
+        int half_h = sprite_h / 2;
+        int scr_y = floor_screen_y - half_h;
 
         /* Source dimensions: columns and rows from object data offsets 14, 15.
          * These define how many columns in the PTR table to span and how many
@@ -1522,7 +1545,7 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
 
         renderer_draw_sprite((int16_t)scr_x, (int16_t)scr_y,
                              (int16_t)sprite_w, (int16_t)sprite_h,
-                             orp->z,
+                             (int16_t)(orp->z > 32767 ? 32767 : orp->z),
                              r->sprite_wad[vect_num], r->sprite_wad_size[vect_num],
                              r->sprite_ptr[vect_num], r->sprite_ptr_size[vect_num],
                              obj_pal, obj_pal_size,
