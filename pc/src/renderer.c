@@ -37,8 +37,8 @@
 
 /* Floor/ceiling UV step: Amiga uses d1>>6 per pixel over 96 columns.
  * At RENDER_SCALE we have 96*RENDER_SCALE columns, so step must be (d1>>6)/RENDER_SCALE
- * to keep the same total U range = d1>>6 * 96. Integer: use shift 6 + log2(RENDER_SCALE). */
-#define FLOOR_STEP_SHIFT  (6 + (RENDER_SCALE > 1 ? 1 : 0) + (RENDER_SCALE > 2 ? 1 : 0))
+ * to keep the same total U range. Integer: use shift 6 + RENDER_SCALE_LOG2. */
+#define FLOOR_STEP_SHIFT  (6 + RENDER_SCALE_LOG2)
 /* Pixels to extend floor/ceiling edges and spans (clamped to zone clip). Use 1 to avoid drawing into portals. */
 #define FLOOR_EDGE_EXTRA  1
 /* Ceiling needs a bit more extension to close gaps at sides (still clamped to clip). */
@@ -498,10 +498,8 @@ static void draw_wall_column(int x, int y_top, int y_bot,
     /* Texture step based on Z distance.
      * The Amiga uses a fixed texture scale in world space - closer walls
      * get more texture detail per screen pixel, farther walls less.
-     * Amiga: tex_step = z << 8 (= z * 256), which assumes Y projection scale of 256.
-     * We use (z << 16) / PROJ_Y_SCALE so the texture maps correctly at any scale.
-     * totalyoff is the starting texture row offset. */
-    int32_t tex_step = (int32_t)(((int64_t)col_z << 16) / PROJ_Y_SCALE);
+     * Divisor from header so one world-space wall height = one texture repeat at any resolution. */
+    int32_t tex_step = (int32_t)(((int64_t)col_z << 16) / WALL_VERTICAL_TEX_DIVISOR);
     int32_t tex_y = (ct - y_top) * tex_step + ((int32_t)totalyoff << 16);
 
     int16_t *depth = g_renderer.depth_buffer;

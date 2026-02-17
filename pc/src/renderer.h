@@ -24,8 +24,12 @@
  * Screen height is 80 lines.
  * -----------------------------------------------------------------------*/
 #define RENDER_SCALE     4     /* Resolution multiplier (1 = Amiga, 4 = 4x for supersample; window scale halved so window size unchanged) */
+#define RENDER_SCALE_LOG2 2    /* log2(RENDER_SCALE); keep in sync when changing RENDER_SCALE (1->0, 2->1, 4->2, 8->3) */
 #define RENDER_WIDTH     (96  * RENDER_SCALE)   /* Visible game columns */
 #define RENDER_HEIGHT    (80  * RENDER_SCALE)   /* Visible game lines   */
+
+/* Wall vertical texture: divisor so one world-space wall height maps to one texture repeat at any resolution. */
+#define WALL_VERTICAL_TEX_DIVISOR  ((int32_t)PROJ_Y_SCALE * (int32_t)RENDER_SCALE)
 #define RENDER_STRIDE    RENDER_WIDTH            /* Bytes per line (1 byte per pixel tag) */
 #define RENDER_BUF_SIZE  (RENDER_STRIDE * RENDER_HEIGHT)
 
