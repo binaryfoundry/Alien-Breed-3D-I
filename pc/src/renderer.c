@@ -1676,6 +1676,20 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
  * Object entry (2 bytes after type word):
  *   +0: draw_mode (word) - 0=before water, 1=after water, 2=full room
  * ----------------------------------------------------------------------- */
+#define MAX_DOOR_ENTRIES 64
+
+static int zone_has_door(const uint8_t *door_data, int16_t zone_id)
+{
+    if (!door_data) return 0;
+    for (int i = 0; i < MAX_DOOR_ENTRIES; i++) {
+        int16_t d_zone = rd16(door_data);
+        if (d_zone < 0) return 0;  /* End of list */
+        if (d_zone == zone_id) return 1;
+        door_data += 16;
+    }
+    return 0;  /* Safety: avoid reading past buffer if format is wrong */
+}
+
 void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
 {
     RendererState *r = &g_renderer;
@@ -1703,6 +1717,8 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
 
     int32_t y_off = r->yoff;
     int half_h = RENDER_HEIGHT / 2;
+
+    int zone_has_door_flag = zone_has_door(level->door_data, zone_id);
 
     /* Read zone number from graphics data (consumed before polyloop) */
     const uint8_t *ptr = gfx_data;
@@ -1777,10 +1793,24 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                  * We use zone_bright + wallbrightoff (no per-vertex brightness yet). */
                 int16_t wall_bright = (int16_t)(zone_bright + wallbrightoff);
 
+                int16_t wall_top = (int16_t)(topwall >> 8);
+                int16_t wall_bot = (int16_t)(botwall >> 8);
+                if (zone_has_door_flag) {
+                    int32_t zone_roof_rel = zone_roof - y_off;
+                    int32_t zone_floor_rel = zone_floor - y_off;
+                    int32_t top_abs = topwall + y_off, bot_abs = botwall + y_off;
+                    const int32_t zone_match_margin = 512;
+                    if (top_abs >= zone_roof - zone_match_margin &&
+                        bot_abs <= zone_floor + zone_match_margin) {
+                        wall_top = (int16_t)(zone_roof_rel >> 8);
+                        wall_bot = (int16_t)(zone_floor_rel >> 8);
+                    }
+                }
+
                 DeferredWall *dw = &deferred[num_deferred++];
                 dw->x1 = rx1; dw->z1 = rz1; dw->x2 = rx2; dw->z2 = rz2;
-                dw->top        = (int16_t)(topwall >> 8);
-                dw->bot        = (int16_t)(botwall >> 8);
+                dw->top        = wall_top;
+                dw->bot        = wall_bot;
                 dw->texture    = wall_tex;
                 dw->tex_start  = leftend;
                 dw->tex_end    = rightend;

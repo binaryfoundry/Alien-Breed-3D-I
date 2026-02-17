@@ -40,9 +40,13 @@ int level_parse(LevelState *level)
     uint8_t *lg = level->graphics;  /* LEVELGRAPHICS */
 
     /* ---- Graphics data header ---- */
-    /* Long 0: Offset to doors */
+    /* Long 0: Offset to doors (0 = no door table) */
     int32_t door_offset = read_long(lg + 0);
-    level->door_data = lg + door_offset;
+    if (door_offset > 0) {
+        level->door_data = lg + door_offset;
+    } else {
+        level->door_data = NULL;
+    }
 
     /* Long 4: Offset to lifts */
     int32_t lift_offset = read_long(lg + 4);
