@@ -964,11 +964,9 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
 
     /* ASM: sub.w d3,d0 (left = center_x - half_w) before doubling d3.
      * ASM: sub.w d4,d2 (top = center_y - half_h) before doubling d4.
-     * width/height passed in are already doubled (full size). */
-    int16_t half_w = width / 2;
-    int16_t half_h = height / 2;
-    int sx = screen_x - half_w;
-    int sy = screen_y - half_h;
+     * width/height passed in are already doubled (full size).
+     * sx/sy are set after we may reduce to draw_w/draw_h for texture aspect. */
+    int sx, sy;
 
     /* Brightness → palette byte offset via objscalecols (ObjDraw3.ChipRam.s line 572).
      * Raw d6 = (z>>7) + obj_bright is passed in as 'brightness'.
@@ -987,56 +985,47 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
     int16_t sprite_z_bias = (sprite_z > 16) ? (sprite_z - 16) : 1;
 
     /* Draw column-by-column (matching Amiga's column-strip approach).
-     * ObjDraw3.ChipRam.s lines 651-671: Amiga uses 2*src_cols and 2*src_rows when
-     * computing consttab indices (add.w d6,d6 after move.b 6(a0),d6 and 7(a0),d6).
-     * So the texture is sampled over the full width/height with effective dimensions
-     * twice the object bytes at 14/15 - otherwise only top-left quadrant is used. */
+     *
+     * The PTR table has src_cols*2 columns per frame (confirmed by frame offset
+     * spacing: e.g. alien frames are 64*4 bytes apart = 64 columns, src_cols=32).
+     * Each column's WAD data has src_rows*2 words.
+     *
+     * Amiga blank-strip logic (line 763): "move.l (a5),d1 / beq blankstrip"
+     * skips only when ALL 4 bytes of the PTR entry are zero (mode==0 AND wad_off==0).
+     * wad_off==0 with mode!=0 is a VALID column (data at start of WAD). */
     int eff_cols = src_cols * 2;
     int eff_rows = src_rows * 2;
     uint32_t max_col = (ptr_size > ptr_offset) ? (ptr_size - ptr_offset) / 4u : 0;
 
-    /* When a PTR entry has wad_off==0 or we're past the frame, reuse previous column
-     * so we don't get occasional blank vertical strips. */
-    uint8_t last_mode = 0;
-    uint32_t last_wad_off = 0;
-    const uint8_t *last_src = NULL;
+    sx = screen_x - width / 2;
+    sy = screen_y - height / 2;
 
     for (int dx = 0; dx < width; dx++) {
         int screen_col = sx + dx;
         if (screen_col < g_renderer.left_clip ||
             screen_col >= g_renderer.right_clip) continue;
 
-        /* Map screen column to source column (full texture range) */
-        int src_col = (width > 1) ? (dx * eff_cols / width) : 0;
+        /* Map screen column to source column 0..eff_cols-1 */
+        int src_col = (width > 1) ? (dx * eff_cols) / width : 0;
         if (src_col >= eff_cols) src_col = eff_cols - 1;
-        /* Clamp to valid PTR range instead of skipping (avoids blank columns) */
+        /* Clamp to valid PTR range */
         if (max_col > 0 && (uint32_t)src_col >= max_col) src_col = (int)(max_col - 1);
 
         /* Read PTR entry for this source column */
         uint32_t entry_off = ptr_offset + (uint32_t)src_col * 4;
-        if (entry_off + 4 > ptr_size) {
-            if (last_src == NULL) continue;
-            /* Reuse previous column */
-        } else {
-            const uint8_t *entry = ptr_data + entry_off;
-            uint8_t mode = entry[0];
-            uint32_t wad_off = ((uint32_t)entry[1] << 16)
-                             | ((uint32_t)entry[2] << 8)
-                             | (uint32_t)entry[3];
-            if (wad_off == 0 || wad_off >= wad_size) {
-                if (last_src == NULL) continue;
-                /* Reuse previous column */
-            } else {
-                last_mode = mode;
-                last_wad_off = wad_off;
-                last_src = wad + wad_off;
-            }
-        }
+        if (entry_off + 4 > ptr_size) continue;
 
-        uint8_t mode = last_mode;
-        uint32_t wad_off = last_wad_off;
-        const uint8_t *src = last_src;
-        if (src == NULL) continue;
+        const uint8_t *entry = ptr_data + entry_off;
+        uint8_t mode = entry[0];
+        uint32_t wad_off = ((uint32_t)entry[1] << 16)
+                         | ((uint32_t)entry[2] << 8)
+                         | (uint32_t)entry[3];
+
+        /* Amiga: beq blankstrip - skip when entire 4-byte entry is zero */
+        if (mode == 0 && wad_off == 0) continue;
+        if (wad_off >= wad_size) continue;
+
+        const uint8_t *src = wad + wad_off;
 
         for (int dy = 0; dy < height; dy++) {
             int screen_row = sy + dy;
@@ -1045,8 +1034,8 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
             if (sprite_z_bias >= depth_buf[screen_row * RENDER_WIDTH + screen_col])
                 continue;
 
-            /* Map screen row to source row (full texture range), add down_strip */
-            int src_row = (height > 1) ? (dy * eff_rows / height) : 0;
+            /* Map screen row to source row 0..eff_rows-1 */
+            int src_row = (height > 1) ? (dy * eff_rows) / height : 0;
             if (src_row >= eff_rows) src_row = eff_rows - 1;
             int row_idx = (int)down_strip + src_row;
 
@@ -1495,15 +1484,21 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         if (world_w < 1 || world_w >= 255) world_w = 32;
         if (world_h < 1 || world_h >= 255) world_h = 32;
 
-        /* Screen pixel size: exact ASM (lines 620-623).
-         * Full size in Amiga pixels = 2 * (world * 128 / z). Use z_for_size so when
-         * very close (z < 50) we don't blow up or disappear - cap gives stable max size. */
+        /* Screen pixel size: ASM lines 620-623.
+         * half_w = world_w * 128 / z, full_w = 2 * half_w = world_w * 256 / z.
+         * Billboard size comes purely from world dimensions + distance. */
         int sprite_w = (int)((int32_t)world_w * 256 * (int32_t)RENDER_SCALE / z_for_size);
         int sprite_h = (int)((int32_t)world_h * 256 * (int32_t)RENDER_SCALE / z_for_size);
         if (sprite_w < 1) sprite_w = 1;
         if (sprite_h < 1) sprite_h = 1;
         if (sprite_w > RENDER_WIDTH) sprite_w = RENDER_WIDTH;
         if (sprite_h > RENDER_HEIGHT) sprite_h = RENDER_HEIGHT;
+
+        /* Source dimensions: columns and rows from object data offsets 14, 15. */
+        int src_cols = (int)obj[14];
+        int src_rows = (int)obj[15];
+        if (src_cols < 1) src_cols = 32;
+        if (src_rows < 1) src_rows = 32;
 
         /* Sprite Y: place base on zone floor so feet sit on the ground.
          * Floor projects at (floor - y_off) / z + 40 (Amiga) → floor_screen_y in our resolution.
@@ -1512,14 +1507,6 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         int floor_screen_y = (int)(floor_rel * (int32_t)RENDER_SCALE / orp->z) + (RENDER_HEIGHT / 2);
         int half_h = sprite_h / 2;
         int scr_y = floor_screen_y - half_h;
-
-        /* Source dimensions: columns and rows from object data offsets 14, 15.
-         * These define how many columns in the PTR table to span and how many
-         * rows per column to sample. */
-        int src_cols = (int)obj[14];
-        int src_rows = (int)obj[15];
-        if (src_cols < 1) src_cols = 32;
-        if (src_rows < 1) src_rows = 32;
 
         /* objVectNumber (offset 8) = sprite type; objVectFrameNumber (offset 10) = frame */
         int16_t vect_num = rd16(obj + 8);
