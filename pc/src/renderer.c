@@ -1626,8 +1626,9 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
     ptr += 2;
 
     /* Brightness for this zone (from ZoneBrightTable if available).
-     * Table layout: byte per zone, upper floor at [zone + num_zones]. */
-    int16_t zone_bright = 8; /* default mid brightness */
+     * Table layout: byte per zone, upper floor at [zone + num_zones].
+     * Default 0 so dark corridors (zone_bright 0 in table) get as dark as the Amiga. */
+    int16_t zone_bright = 0;
     if (level->zone_bright_table && zone_id >= 0 && zone_id < level->num_zones) {
         int bright_idx = use_upper && level->num_zones > 0
             ? zone_id + level->num_zones : zone_id;
@@ -1670,6 +1671,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
             int16_t  horand    = rd16(ptr + 16);      /* horiz AND mask */
             int32_t topwall  = rd32(ptr + 18);  /* wall top height */
             int32_t botwall  = rd32(ptr + 22);  /* wall bottom height */
+            int16_t wallbrightoff = rd16(ptr + 26);  /* ASM: move.w (a0)+,wallbrightoff */
 
             /* Subtract camera Y (ASM: sub.l d6,topofwall / sub.l d6,botofwall) */
             topwall -= y_off;
@@ -1686,6 +1688,10 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 int16_t tex_id = rd16(ptr + 12);
                 const uint8_t *wall_tex = (tex_id >= 0 && tex_id < MAX_WALL_TILES) ? r->walltiles[tex_id] : NULL;
 
+                /* Amiga: leftwallbright = pointBrightsPtr[pt] + 300 + wallbrightoff.
+                 * We use zone_bright + wallbrightoff (no per-vertex brightness yet). */
+                int16_t wall_bright = (int16_t)(zone_bright + wallbrightoff);
+
                 DeferredWall *dw = &deferred[num_deferred++];
                 dw->x1 = rx1; dw->z1 = rz1; dw->x2 = rx2; dw->z2 = rz2;
                 dw->top        = (int16_t)(topwall >> 8);
@@ -1693,7 +1699,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 dw->texture    = wall_tex;
                 dw->tex_start  = leftend;
                 dw->tex_end    = rightend;
-                dw->brightness = (int16_t)zone_bright;
+                dw->brightness = wall_bright;
                 dw->valand     = valand;
                 dw->valshift   = valshift;
                 dw->horand     = horand;

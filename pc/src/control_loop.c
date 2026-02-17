@@ -280,8 +280,8 @@ void play_the_game(GameState *state)
         if (state->level.num_zones > 0 && !state->level.zone_bright_table) {
             state->level.zone_bright_table = (uint8_t *)calloc(1,
                 (size_t)(state->level.num_zones * 2 + 1));
-            /* Initialize to default brightness (8) */
-            memset(state->level.zone_bright_table, 8,
+            /* Initialize to 0 so dark areas match Amiga; level can set brighter zones */
+            memset(state->level.zone_bright_table, 0,
                    (size_t)(state->level.num_zones * 2));
         }
 
