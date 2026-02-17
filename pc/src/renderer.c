@@ -1116,11 +1116,14 @@ void renderer_draw_gun(GameState *state)
     PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
     if (plr->gun_selected < 0) return;
 
-    /* Amiga: 96 columns, 58 lines; anchor bottom of gun to bottom of screen */
-    const int gun_h = GUN_LINES;
-    int gy = RENDER_HEIGHT - gun_h;  /* gun top so last line is at RENDER_HEIGHT-1 */
+    /* Amiga: 96 columns, 58 lines. Scale with RENDER_SCALE so gun matches view resolution. */
+    const int gun_w_src = GUN_COLS;
+    const int gun_h_src = GUN_LINES;
+    const int gun_w_draw = gun_w_src * RENDER_SCALE;
+    const int gun_h_draw = gun_h_src * RENDER_SCALE;
+    int gy = RENDER_HEIGHT - gun_h_draw;
     if (gy < 0) gy = 0;
-    /* Recoil is shown by the gun frame animation only; no vertical shift so gun always reaches bottom */
+    int gx = (RENDER_WIDTH - gun_w_draw) / 2;
 
     /* Draw from loaded gun data (newgunsinhand.wad + .ptr + .pal) if present */
     const uint8_t *gun_wad = g_renderer.gun_wad;
@@ -1142,81 +1145,80 @@ void renderer_draw_gun(GameState *state)
 
         if (ptr_off != 0 || (gun_type != 5 && gun_type != 6)) {
             const uint8_t *frame_ptr = gun_ptr + ptr_off;
-            for (int col = 0; col < GUN_COLS && col < RENDER_WIDTH; col++) {
-                uint8_t mode = frame_ptr[0];
-                uint32_t wad_off = ((uint32_t)frame_ptr[1] << 16) | ((uint32_t)frame_ptr[2] << 8) | (uint32_t)frame_ptr[3];
-                frame_ptr += 4;
+            /* Draw scaled: each screen pixel (sx,sy) samples source at (sx-gx)/RENDER_SCALE, (sy-gy)/RENDER_SCALE */
+            for (int sy = gy; sy < gy + gun_h_draw && sy < RENDER_HEIGHT; sy++) {
+                if (sy < 0) continue;
+                int src_row = (sy - gy) / RENDER_SCALE;
+                if (src_row >= gun_h_src) continue;
+                for (int sx = gx; sx < gx + gun_w_draw && sx < RENDER_WIDTH; sx++) {
+                    if (sx < 0) continue;
+                    int src_col = (sx - gx) / RENDER_SCALE;
+                    if (src_col >= gun_w_src) continue;
 
-                if (wad_off == 0) continue;
-                if (wad_off >= gun_wad_size) continue;
+                    const uint8_t *col_ptr = gun_ptr + ptr_off + (uint32_t)src_col * 4;
+                    uint8_t mode = col_ptr[0];
+                    uint32_t wad_off = ((uint32_t)col_ptr[1] << 16) | ((uint32_t)col_ptr[2] << 8) | (uint32_t)col_ptr[3];
+                    if (wad_off == 0 || wad_off >= gun_wad_size) continue;
 
-                const uint8_t *src = gun_wad + wad_off;
-                for (int row = 0; row < gun_h; row++) {
-                    int sy = gy + row;
-                    if (sy < 0 || sy >= RENDER_HEIGHT) continue;
-
+                    const uint8_t *src = gun_wad + wad_off;
                     uint32_t idx = 0;
                     if (mode == 0) {
-                        if (wad_off + (size_t)(row + 1) * 2 > gun_wad_size) break;
-                        uint16_t w = (uint16_t)((src[row * 2u] << 8) | src[row * 2u + 1]);
+                        if (wad_off + (size_t)(src_row + 1) * 2 > gun_wad_size) continue;
+                        uint16_t w = (uint16_t)((src[src_row * 2u] << 8) | src[src_row * 2u + 1]);
                         idx = (uint32_t)(w & 31u);
                     } else if (mode == 1) {
-                        if (wad_off + (size_t)(row + 1) * 2 > gun_wad_size) break;
-                        uint16_t w = (uint16_t)((src[row * 2u] << 8) | src[row * 2u + 1]);
+                        if (wad_off + (size_t)(src_row + 1) * 2 > gun_wad_size) continue;
+                        uint16_t w = (uint16_t)((src[src_row * 2u] << 8) | src[src_row * 2u + 1]);
                         idx = (uint32_t)((w >> 5) & 31u);
                     } else {
-                        if (wad_off + (size_t)row * 2u + 1 >= gun_wad_size) break;
-                        uint8_t b = src[row * 2u];
+                        if (wad_off + (size_t)src_row * 2u + 1 >= gun_wad_size) continue;
+                        uint8_t b = src[src_row * 2u];
                         idx = (uint32_t)((b >> 2) & 31u);
                     }
                     if (idx == 0) continue;
 
                     uint16_t c12 = (uint16_t)((gun_pal[idx * 2u] << 8) | gun_pal[idx * 2u + 1]);
                     uint32_t c = amiga12_to_argb(c12);
-                    int sx = col;
-                    if (sx >= 0 && sx < RENDER_WIDTH) {
-                        buf[sy * RENDER_STRIDE + sx] = 15;
-                        rgb[sy * RENDER_WIDTH + sx] = c;
-                    }
+                    buf[sy * RENDER_STRIDE + sx] = 15;
+                    rgb[sy * RENDER_WIDTH + sx] = c;
                 }
             }
             return;
         }
     }
 
-    /* Placeholder when gun data not loaded or slot unused */
-    const int gun_w = 48;
-    int gx = (RENDER_WIDTH - gun_w) / 2;
+    /* Placeholder when gun data not loaded or slot unused (narrower than WAD: 48 logical width) */
+    const int placeholder_gun_w = 48 * RENDER_SCALE;
+    int gx_ph = (RENDER_WIDTH - placeholder_gun_w) / 2;
     uint32_t col_barrel = 0xFF808080u;
     uint32_t col_body  = 0xFF606060u;
     uint32_t col_grip  = 0xFF404040u;
+    const int mid_logical = 24;  /* 48/2 in source space */
 
-    for (int y = gy; y < gy + gun_h && y < RENDER_HEIGHT; y++) {
+    for (int y = gy; y < gy + gun_h_draw && y < RENDER_HEIGHT; y++) {
         if (y < 0) continue;
         int local_y = y - gy;
-        for (int x = gx; x < gx + gun_w && x < RENDER_WIDTH; x++) {
+        int local_y_logical = local_y / RENDER_SCALE;
+        for (int x = gx_ph; x < gx_ph + placeholder_gun_w && x < RENDER_WIDTH; x++) {
             if (x < 0) continue;
-            int local_x = x - gx;
+            int local_x = x - gx_ph;
+            int local_x_logical = local_x / RENDER_SCALE;
 
-            int mid = gun_w / 2;
             int draw = 0;
             uint32_t c = 0;
 
-            if (local_y < gun_h * 2 / 5) {
-                /* Barrel: narrow strip down center */
-                if (local_x >= mid - 2 && local_x <= mid + 2) {
+            if (local_y_logical < gun_h_src * 2 / 5) {
+                if (local_x_logical >= mid_logical - 2 && local_x_logical <= mid_logical + 2) {
                     draw = 1; c = col_barrel;
                 }
-            } else if (local_y < gun_h * 3 / 5) {
-                /* Body: wider */
-                if (local_x >= mid - 6 && local_x <= mid + 6) {
+            } else if (local_y_logical < gun_h_src * 3 / 5) {
+                if (local_x_logical >= mid_logical - 6 && local_x_logical <= mid_logical + 6) {
                     draw = 1; c = col_body;
                 }
             } else {
-                /* Grip: tapered, wider at bottom */
-                int w = 4 + (local_y - gun_h * 3 / 5) / 4;
+                int w = 4 + (local_y_logical - gun_h_src * 3 / 5) / 4;
                 if (w > 10) w = 10;
-                if (local_x >= mid - w && local_x <= mid + w) {
+                if (local_x_logical >= mid_logical - w && local_x_logical <= mid_logical + w) {
                     draw = 1; c = col_grip;
                 }
             }
