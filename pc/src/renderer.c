@@ -170,6 +170,8 @@ void renderer_init(void)
     /* Default clip region = full screen */
     g_renderer.top_clip = 0;
     g_renderer.bot_clip = RENDER_HEIGHT - 1;
+    g_renderer.wall_top_clip = -1;
+    g_renderer.wall_bot_clip = -1;
     g_renderer.left_clip = 0;
     g_renderer.right_clip = RENDER_WIDTH;
 
@@ -453,9 +455,11 @@ static void draw_wall_column(int x, int y_top, int y_bot,
     int yt = y_top, yb = y_bot;
     if (yb <= yt) yb = yt + 1;
 
-    /* Clip to screen */
-    int ct = (yt < g_renderer.top_clip) ? g_renderer.top_clip : yt;
-    int cb = (yb > g_renderer.bot_clip) ? g_renderer.bot_clip : yb;
+    /* Clip to screen. wall_top_clip/wall_bot_clip (multi-floor) let walls extend to meet ceiling/floor. */
+    int effective_top = (g_renderer.wall_top_clip >= 0) ? (int)g_renderer.wall_top_clip : g_renderer.top_clip;
+    int ct = (yt < effective_top) ? effective_top : yt;
+    int effective_bot = (g_renderer.wall_bot_clip >= 0) ? (int)g_renderer.wall_bot_clip : g_renderer.bot_clip;
+    int cb = (yb > effective_bot) ? effective_bot : yb;
     if (ct > cb) return;
 
     int wall_height = cb - ct;
@@ -2370,6 +2374,8 @@ void renderer_draw_display(GameState *state)
         r->right_clip = RENDER_WIDTH;
         r->top_clip = 0;
         r->bot_clip = RENDER_HEIGHT - 1;
+        r->wall_top_clip = -1;
+        r->wall_bot_clip = -1;
 
         /* Apply zone clipping from ListOfGraphRooms + LEVELCLIPS.
          * ListOfGraphRooms entries are 8 bytes:
@@ -2444,15 +2450,27 @@ void renderer_draw_display(GameState *state)
                 const uint8_t *zd = state->level.data + zone_off;
                 int32_t zone_roof = rd32(zd + 6);  /* ToZoneRoof = split height */
                 int32_t rel = zone_roof - r->yoff;
-                /* Split screen Y where lower ceiling / upper floor projects (ref z ~400) */
+                /* Split screen Y where lower ceiling / upper floor projects (ref z ~400). */
                 int split_y = (int)((int64_t)(rel >> 8) * PROJ_Y_SCALE * RENDER_SCALE / 400) + (RENDER_HEIGHT / 2);
                 if (split_y < 1) split_y = 1;
                 if (split_y >= RENDER_HEIGHT) split_y = RENDER_HEIGHT - 1;
-                r->top_clip = (int16_t)split_y;
+                /* Reserve a band above the split for the lower room so the wall can extend up to
+                 * meet the ceiling. When very close to the wall the ceiling projects high on screen,
+                 * so use a large margin so the join holds even at close range. */
+                const int split_margin = (RENDER_HEIGHT * 3) / 5;  /* large band so wall meets ceiling when very close */
+                int lower_top = split_y - split_margin;
+                if (lower_top < 0) lower_top = 0;
+                int upper_bot = split_y - split_margin - 1;
+                if (upper_bot < 0) upper_bot = -1;
+                r->top_clip = (int16_t)lower_top;
                 r->bot_clip = RENDER_HEIGHT - 1;
+                r->wall_top_clip = 0;   /* lower room: walls can extend to top when very close to wall */
+                r->wall_bot_clip = -1;
                 renderer_draw_zone(state, zone_id, 0);  /* lower room */
                 r->top_clip = 0;
-                r->bot_clip = (int16_t)(split_y - 1);
+                r->bot_clip = (int16_t)(upper_bot >= 0 ? upper_bot : split_y - 1);
+                r->wall_top_clip = -1;
+                r->wall_bot_clip = (int16_t)split_y;  /* upper room: walls extend down to meet floor at split */
                 renderer_draw_zone(state, zone_id, 1);  /* upper room */
                 continue;
             }

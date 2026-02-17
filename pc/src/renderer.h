@@ -143,6 +143,9 @@ typedef struct {
     int16_t right_clip;
     int16_t top_clip;
     int16_t bot_clip;
+    /* Multi-floor: optional extra clip for walls only. -1 = use normal top_clip/bot_clip. */
+    int16_t wall_top_clip;  /* lower room: 0 so walls can extend to top when very close */
+    int16_t wall_bot_clip;  /* upper room: split_y so walls meet floor at split */
 
     /* Current room rendering state */
     int32_t top_of_room;
