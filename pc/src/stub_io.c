@@ -11,6 +11,7 @@
 #include "sb_decompress.h"
 #include "renderer.h"
 #include "game_types.h"
+#include "sprite_palettes.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1333,15 +1334,11 @@ void io_load_objects(void)
             }
         }
 
-        /* Load .pal (brightness palette) */
-        if (sprite_pal_names[i]) {
-            uint8_t *data = NULL; size_t sz = 0;
-            if (load_sprite_file(sprite_pal_names[i], "pal", &data, &sz)) {
-                g_sprite_pal_store[i] = data;
-                g_renderer.sprite_pal_data[i] = data;
-                g_renderer.sprite_pal_size[i] = sz;
-                printf("[IO] Sprite %2d PAL: %s (%zu bytes)\n", i, sprite_pal_names[i], sz);
-            }
+        /* .pal: embedded tables only (from pc/data/pal via sprite_palettes_data.h). No runtime load. */
+        if (sprite_pal_embedded_size[i] > 0 && sprite_pal_embedded[i] != NULL) {
+            g_renderer.sprite_pal_data[i] = sprite_pal_embedded[i];
+            g_renderer.sprite_pal_size[i] = sprite_pal_embedded_size[i];
+            printf("[IO] Sprite %2d PAL: table (%zu bytes)\n", i, sprite_pal_embedded_size[i]);
         }
     }
 }

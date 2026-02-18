@@ -41,11 +41,36 @@ set(SOURCES
     src/stub_audio.c
     src/stub_io.c
     src/sb_decompress.c
+    src/sprite_palettes.c
 )
 
 add_executable(ab3d1 ${SOURCES})
 
 target_include_directories(ab3d1 PRIVATE src)
+
+# Generate sprite_palettes_data.h from pc/data/pal/*.pal (no runtime .pal load)
+set(PAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/data/pal")
+set(PAL_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/src/sprite_palettes_data.h")
+if(EXISTS "${PAL_DIR}")
+  find_package(Python3 QUIET)
+  if(Python3_FOUND)
+    execute_process(
+      COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tools/pal_to_header.py"
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+      RESULT_VARIABLE PAL_RESULT
+      OUTPUT_VARIABLE PAL_OUT
+      ERROR_VARIABLE PAL_ERR
+    )
+    if(PAL_RESULT EQUAL 0)
+      message(STATUS "Sprite palettes: ${PAL_OUT}")
+    else()
+      message(WARNING "Sprite palette generation failed: ${PAL_ERR}")
+    endif()
+  endif()
+endif()
+if(NOT EXISTS "${PAL_HEADER}")
+  message(FATAL_ERROR "sprite_palettes_data.h not found. Put .pal files in pc/data/pal and run: python pc/tools/pal_to_header.py")
+endif()
 
 # Link SDL2 (no SDL2main - we use CONSOLE subsystem for printf output)
 target_link_libraries(ab3d1 PRIVATE SDL2-static)
