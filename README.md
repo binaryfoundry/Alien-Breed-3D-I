@@ -1,19 +1,114 @@
 # Alien Breed 3D I
-* For VS Code with Amiga Assembly extension (Paul Raingeard)<br>
-* For AGA + 68020 + 2mb CHIP + 2mb FAST + KS ROM v3.1 + Mass storage<br>
-* Assembled around the "4000test.s" source code<br>
-* Needs data files from the original game<br>
-<br>
-Original Team 17 sources : https://github.com/videogamepreservation/alienbreed3dii.git<br>
-RTG version sources : https://github.com/mheyer32/ab3d-rtg<br>
-VS Code extension : https://marketplace.visualstudio.com/items?itemName=prb28.amiga-assembly<br>
-<br>
-Builds & runs & can play<br>
-<br>
 
-![screenshot](https://user-images.githubusercontent.com/119355918/212428433-8053ce24-9277-4efd-95a4-a7c1e8929e68.png)
+A **C port** of **Alien Breed 3D** (Amiga), translating the original 68000 assembly into C and rendering with SDL2 on Windows, Linux, and macOS. The game logic, level format, and data layout follow the Amiga version; assets must be extracted from the original game.
 
-Additional features :
-- Exit to shell by 'ESC'-key on the main menu.
-- 'wasd'-movement control. Press 'n'-key to activate.
-- Level passwords are saved automatically on exit. Use 'TAB'-key on the main menu to navigate between levels.
+---
+
+## What this project is
+
+- **Source**: The Amiga game was written in 68000 assembly (`.s`). This repo contains both the original assembly (for reference) and a **PC port in C** under `pc/`.
+- **Port**: The C code in `pc/src/` reimplements the renderer (wall/floor/ceiling texturing, sprites), movement, AI, objects (doors, lifts, switches), and game loop. Data files are the same format as the Amiga (big-endian where applicable).
+- **Runtime**: The port uses **SDL2** for video, input, and (stub) audio. No original Amiga binaries are executed.
+
+You need **game data** from the original Alien Breed 3D (e.g. from the game’s ADF disk images). The port does not ship any copyrighted assets.
+
+---
+
+## Extracting game data from ADF files
+
+Game data comes from the **original Alien Breed 3D** release (e.g. Amiga ADF images). You must own or have the right to use the game.
+
+### 1. Getting files out of the ADF
+
+Use **unadf** to extract the contents of the game’s ADF image(s). For example:
+
+```bash
+unadf game.adf
+```
+
+This extracts the disk contents into the current directory. Copy or rename the extracted files so they match the layout under **`pc/data/`** in the next section.
+
+### 2. Where to put the data
+
+Place all game data in **`pc/data/`** (relative to the repository root). Create this structure inside **`pc/data/`**:
+
+| Path | Description |
+|------|-------------|
+| **`includes/floortile`** | Floor texture (raw 256×256 8-bit). Used to detect the data root. |
+| **`includes/FloorPalScaled`** | Floor brightness palette (or `pal/FloorPalScaled.s` as fallback). |
+| **`includes/walls/`** | Wall textures. One file per entry (see list below). |
+| **`includes/`** | Sprites and gun: `.wad`, `.ptr`; gun also uses `.pal` from `includes/` or `pal/`. |
+| **`levels/level_a/`**, **`level_b/`**, … | Level data for level 0, 1, … (see below). |
+| **`disk/includes/`** | Optional alternate path for gun/sprites (Amiga-style path). |
+| **`math/bigsine`** | Optional 4096-entry sine table (binary). If missing, the port generates one. |
+
+**Wall textures** in `includes/walls/` (exact filenames):
+
+`GreenMechanic.wad`, `BlueGreyMetal.wad`, `TechnoDetail.wad`, `BlueStone.wad`, `RedAlert.wad`, `rock.wad`, `scummy.wad`, `stairfronts.wad`, `BIGDOOR.wad`, `RedRock.wad`, `dirt.wad`, `switches.wad`, `shinymetal.wad`, `bluemechanic.wad`.
+
+Each `.wad` can be raw or **=SB= compressed**; the loader decompresses automatically.
+
+**Levels** (per level index 0, 1, … → `level_a`, `level_b`, …):
+
+- **`levels/level_a/twolev.bin`** – level data  
+- **`levels/level_a/twolev.graph.bin`** – level graphics (walls, floors, roofs)  
+- **`levels/level_a/twolev.clips`** – clip data  
+
+If a level file is missing, the port falls back to a small procedural test level.
+
+**Gun**: `includes/newgunsinhand.wad`, `includes/newgunsinhand.ptr`, and a palette (`pal/newgunsinhand.pal` or `includes/newgunsinhand.pal`). If the palette is missing, a default grayscale one is used.
+
+---
+
+## Build
+
+### Requirements
+
+- **CMake** 3.16+
+- **C11** compiler (MSVC, GCC, Clang)
+- **SDL2** – fetched automatically by CMake (FetchContent)
+
+### Steps
+
+```bash
+cd pc
+mkdir build
+cd build
+cmake ..
+cmake --build . --config Release
+```
+
+On Windows with Visual Studio you can open the generated solution in `build/` and build from the IDE. The executable is typically `build/Release/ab3d1.exe` (Windows) or `build/ab3d1` (Unix).
+
+---
+
+## Run
+
+Put game data in **`pc/data/`**. Run the executable from the repository root so it can find `pc/data/`:
+
+```bash
+cd path/to/Alien-Breed-3D-I
+pc/build/Release/ab3d1.exe
+```
+
+If data is not found you’ll see `[IO] WARNING: Could not locate data/ directory`. Ensure **`pc/data/`** exists and contains at least `includes/floortile` (and the other files you need).
+
+Without real level data, the port still runs and uses the built-in test level so you can test the renderer and controls.
+
+---
+
+## Controls (typical)
+
+- **WASD** – movement (press **N** to activate on the menu if required)
+- **Mouse / arrow keys** – look / turn
+- **Space** – use (doors, switches)
+- **ESC** – exit to shell on the main menu
+- **TAB** – level selection on the main menu (level passwords can be saved on exit)
+
+---
+
+## References
+
+- Original Team 17 sources: [alienbreed3dii](https://github.com/videogamepreservation/alienbreed3dii.git)
+- RTG version: [ab3d-rtg](https://github.com/mheyer32/ab3d-rtg)
+- VS Code Amiga Assembly extension: [prb28.amiga-assembly](https://marketplace.visualstudio.com/items?itemName=prb28.amiga-assembly)
