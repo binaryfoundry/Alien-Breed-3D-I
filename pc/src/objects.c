@@ -28,6 +28,10 @@ static inline int32_t be32(const uint8_t *p) {
     return (int32_t)(((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
                      ((uint32_t)p[2] << 8) | (uint32_t)p[3]);
 }
+static inline void write_be16(uint8_t *p, int16_t w) {
+    p[0] = (uint8_t)((unsigned)w >> 8);
+    p[1] = (uint8_t)(unsigned)w;
+}
 static inline void wbe16(uint8_t *p, int16_t v) {
     p[0] = (uint8_t)((uint16_t)v >> 8); p[1] = (uint8_t)v;
 }
@@ -1344,7 +1348,7 @@ void switch_routine(GameState *state)
         int16_t zone_id = be16(sw);
         if (zone_id < 0) break;
 
-        int8_t cooldown = *(int8_t*)(sw + 3);  /* single byte - endian safe */
+        int8_t cooldown = *(int8_t*)(sw + 3);  /* byte 3 (Anims: sub.b d1,3(a0)) */
 
         /* Decrement cooldown */
         if (cooldown > 0) {
@@ -1353,18 +1357,17 @@ void switch_routine(GameState *state)
             *(int8_t*)(sw + 3) = cooldown;
         }
 
-        /* Check if player is near and pressing space */
+        /* Check if player is near and pressing space.
+         * Switch record is 14 bytes (Anims.s adda.w #14): zone(2), bit_mask(2), cooldown(1),
+         * pad(1), gfx_offset(4) = offset into level->graphics to the switch wall entry,
+         * position(4) = x(2), z(2). */
         if (cooldown == 0) {
-            /* Distance check: switch is at zone center, check player distance
-             * Original uses distance_sq < 60*60 = 3600 */
-            int16_t sw_x = be16(sw + 6); /* switch X position */
-            int16_t sw_z = be16(sw + 8); /* switch Z position */
+            int16_t sw_x = be16(sw + 10); /* switch X position */
+            int16_t sw_z = be16(sw + 12); /* switch Z position */
 
-            /* Check player zone matches switch zone as proximity test */
             bool near_plr1 = (state->plr1.zone == zone_id);
             bool near_plr2 = (state->plr2.zone == zone_id);
 
-            /* More precise: if positions available, check distance */
             if (near_plr1 && sw_x != 0) {
                 int32_t dx = state->plr1.p_xoff - sw_x;
                 int32_t dz = state->plr1.p_zoff - sw_z;
@@ -1377,21 +1380,35 @@ void switch_routine(GameState *state)
             }
 
             if (state->plr1.p_spctap && near_plr1) {
-                /* Toggle condition bit */
                 int16_t bit_mask = be16(sw + 4);
                 game_conditions ^= bit_mask;
                 *(int8_t*)(sw + 3) = 20; /* cooldown */
+                /* Patch switch wall: only flip bit 1 (on/off); preserve point index in first word */
+                if (state->level.graphics) {
+                    int32_t gfx_off = (int32_t)be32(sw + 6);
+                    uint8_t *wall_ptr = state->level.graphics + gfx_off;
+                    int16_t w = be16(wall_ptr);
+                    w = (int16_t)((w & ~2) | ((game_conditions & bit_mask) ? 2 : 0));
+                    write_be16(wall_ptr, w);
+                }
                 audio_play_sample(10, 50);
             }
             if (state->plr2.p_spctap && near_plr2) {
                 int16_t bit_mask = be16(sw + 4);
                 game_conditions ^= bit_mask;
                 *(int8_t*)(sw + 3) = 20;
+                if (state->level.graphics) {
+                    int32_t gfx_off = (int32_t)be32(sw + 6);
+                    uint8_t *wall_ptr = state->level.graphics + gfx_off;
+                    int16_t w = be16(wall_ptr);
+                    w = (int16_t)((w & ~2) | ((game_conditions & bit_mask) ? 2 : 0));
+                    write_be16(wall_ptr, w);
+                }
                 audio_play_sample(10, 50);
             }
         }
 
-        sw += 8;
+        sw += 14;
     }
 }
 

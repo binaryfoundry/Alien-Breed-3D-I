@@ -550,15 +550,20 @@ static void draw_wall_column(int x, int y_top, int y_bot,
     int strip_offset = strip_index << (valshift + 1);
 
     /* Texture step from world wall height. Repeats = wall_height_world/64.
-     * Step maps (1<<valshift)*(h/64) texel rows over (y_bot-y_top) pixels. */
+     * Step maps (1<<valshift)*(h/64) texel rows over (y_bot-y_top) pixels.
+     * For textures with fewer than 64 rows (e.g. switches 32 rows), use a minimum
+     * h of 64 so one full texture repeat maps to the wall; otherwise a short wall
+     * (e.g. h=32) would only show the middle band and cut off top/bottom. */
     int wall_pixels = yb - yt;
     if (wall_pixels < 1) wall_pixels = 1;
+    int rows = 1 << valshift;
     int h = (int)wall_height_world;
     if (h < 1) h = 1;
-    int rows = 1 << valshift;
+    if (rows < 64 && h < 64) h = 64;  /* ensure full texture height visible on short walls */
     int32_t tex_step = (int32_t)(((int64_t)rows * (int64_t)h << 16) / (64 * wall_pixels));
-    /* Level totalyoff is in 64-row units; scale so same value gives same visual offset for any texture height. */
-    int32_t yoff = (valshift != 6) ? (int32_t)totalyoff * rows / 64 : (int32_t)totalyoff;
+    /* Amiga: totalyoff is added to row index then masked with VALAND (WallRoutine3 line 1803–1804).
+     * So yoff is in texture row units and must wrap: use totalyoff & valand. */
+    int32_t yoff = (int32_t)((unsigned)totalyoff & (unsigned)valand);
     int32_t tex_y = (ct - y_top) * tex_step + ((int32_t)yoff << 16);
 
     int16_t *depth = g_renderer.depth_buffer;
@@ -1878,6 +1883,8 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
             topwall -= y_off;
             botwall -= y_off;
 
+            int16_t tex_id = rd16(ptr + 12);
+            /* Switch walls: use p1 as point index; bit 1 of first word = on/off for texture only */
             if (p1 >= 0 && p1 < MAX_POINTS && p2 >= 0 && p2 < MAX_POINTS &&
                 num_deferred < MAX_DEFERRED_WALLS)
             {
@@ -1885,8 +1892,6 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 int16_t rz1 = (int16_t)r->rotated[p1].z;
                 int16_t rx2 = (int16_t)(r->rotated[p2].x >> 7);
                 int16_t rz2 = (int16_t)r->rotated[p2].z;
-
-                int16_t tex_id = rd16(ptr + 12);
                 const uint8_t *wall_tex = (tex_id >= 0 && tex_id < MAX_WALL_TILES) ? r->walltiles[tex_id] : NULL;
 
                 /* Use dimensions from loaded file when available; else use level data. */
@@ -1917,6 +1922,13 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                     }
                 }
 
+                /* Switch walls (tex_id 11): same texture has on/off states.
+                 * Amiga stores state in wall first word bit 1 (Anims.s: or.w #2,d3 for "on").
+                 * Top half of texture (rows 0–15) = off, bottom half (rows 16–31) = on. */
+                int16_t eff_totalyoff = totalyoff;
+                if (tex_id == SWITCHES_WALL_TEX_ID && (p1 & 2))
+                    eff_totalyoff = (int16_t)(totalyoff + 16);
+
                 DeferredWall *dw = &deferred[num_deferred++];
                 dw->x1 = rx1; dw->z1 = rz1; dw->x2 = rx2; dw->z2 = rz2;
                 dw->top        = wall_top;
@@ -1930,8 +1942,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 dw->valshift   = use_valshift;
                 dw->horand     = horand;
                 dw->tex_id     = tex_id;
-                /* totalyoff is added to tex_y, then masked in draw_wall_column */
-                dw->totalyoff  = totalyoff;
+                dw->totalyoff  = eff_totalyoff;
                 dw->fromtile   = fromtile;
             }
             ptr += 28;
