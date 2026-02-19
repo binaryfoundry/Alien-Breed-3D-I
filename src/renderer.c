@@ -238,10 +238,12 @@ void renderer_shutdown(void)
     free(g_renderer.back_buffer);
     free(g_renderer.rgb_buffer);
     free(g_renderer.rgb_back_buffer);
+    free(g_renderer.depth_buffer);
     g_renderer.buffer = NULL;
     g_renderer.back_buffer = NULL;
     g_renderer.rgb_buffer = NULL;
     g_renderer.rgb_back_buffer = NULL;
+    g_renderer.depth_buffer = NULL;
     printf("[RENDERER] Shutdown\n");
 }
 
@@ -502,7 +504,8 @@ static void draw_wall_column(int x, int y_top, int y_bot,
 {
     uint8_t *buf = g_renderer.buffer;
     uint32_t *rgb = g_renderer.rgb_buffer;
-    if (!buf || !rgb) return;
+    int16_t *depth = g_renderer.depth_buffer;
+    if (!buf || !rgb || !depth) return;
     if (x < g_renderer.left_clip || x >= g_renderer.right_clip) return;
 
     /* Short walls (e.g. step risers) can project to same row; ensure at least 1 pixel height */
@@ -565,7 +568,6 @@ static void draw_wall_column(int x, int y_top, int y_bot,
     int32_t yoff = (int32_t)((unsigned)totalyoff & (unsigned)valand);
     int32_t tex_y = (ct - y_top_tex) * tex_step + ((int32_t)yoff << 16);
 
-    int16_t *depth = g_renderer.depth_buffer;
     int16_t col_z16 = (col_z > 32767) ? 32767 : (int16_t)col_z;
 
     for (int y = ct; y <= cb; y++) {
@@ -583,8 +585,9 @@ static void draw_wall_column(int x, int y_top, int y_bot,
         uint32_t argb;
 
         if (texture && pal) {
-            /* Read the packed 16-bit word (big-endian) */
+            /* Read the packed 16-bit word (big-endian). Guard against bad tex_col yielding negative offset. */
             int byte_off = strip_offset + ty * 2;
+            if (byte_off >= 0) {
             uint16_t word = ((uint16_t)texture[byte_off] << 8)
                           | (uint16_t)texture[byte_off + 1];
 
@@ -602,6 +605,12 @@ static void draw_wall_column(int x, int y_top, int y_bot,
             uint16_t color_word = ((uint16_t)pal[lut_off] << 8) | pal[lut_off + 1];
 
             argb = amiga12_to_argb(color_word);
+            } else {
+            int gray = (64 - amiga_d6) * 255 / 64;
+            if (gray < 0) gray = 0;
+            if (gray > 255) gray = 255;
+            argb = 0xFF000000u | ((uint32_t)gray << 16) | ((uint32_t)gray << 8) | (uint32_t)gray;
+            }
         } else {
             /* No texture or no LUT - fallback: d6=0 brightest, d6=64 darkest (Amiga range) */
             int gray = (64 - amiga_d6) * 255 / 64;
@@ -862,7 +871,7 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
     RendererState *rs = &g_renderer;
     uint8_t *buf = rs->buffer;
     uint32_t *rgb = rs->rgb_buffer;
-    if (!buf || !rgb) return;
+    if (!buf || !rgb || !rs->depth_buffer) return;
     if (y < 0 || y >= RENDER_HEIGHT) return;
 
     int xl = (x_left < rs->left_clip) ? rs->left_clip : x_left;
@@ -2487,8 +2496,10 @@ void renderer_draw_display(GameState *state)
         r->clip.bot[i] = RENDER_HEIGHT - 1;
     }
     /* Clear depth buffer to far (large Z = far away) */
-    for (int i = 0; i < RENDER_WIDTH * RENDER_HEIGHT; i++) {
-        r->depth_buffer[i] = 32767;
+    if (r->depth_buffer) {
+        for (int i = 0; i < RENDER_WIDTH * RENDER_HEIGHT; i++) {
+            r->depth_buffer[i] = 32767;
+        }
     }
 
     /* 4. Rotate geometry */
