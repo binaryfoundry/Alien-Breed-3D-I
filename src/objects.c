@@ -1512,7 +1512,7 @@ void bright_anim_handler(GameState *state)
         if (final_bright > 255) final_bright = 255;
 
         if (state->level.zone_bright_table) {
-            state->level.zone_bright_table[zone_id] = (uint8_t)final_bright;
+            state->level.zone_bright_table[zone_id] = (int16_t)final_bright;
         }
 
         ba += 8; /* next entry */

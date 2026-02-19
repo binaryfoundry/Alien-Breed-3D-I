@@ -276,13 +276,10 @@ void play_the_game(GameState *state)
                 (size_t)(state->level.num_zones + 1));
         }
 
-        /* Allocate zone brightness table (lower + upper = 2 * num_zones) */
+        /* Allocate zone brightness table (16-bit per zone: lower + upper = 2 * num_zones) */
         if (state->level.num_zones > 0 && !state->level.zone_bright_table) {
-            state->level.zone_bright_table = (uint8_t *)calloc(1,
-                (size_t)(state->level.num_zones * 2 + 1));
-            /* Initialize to 0 so dark areas match Amiga; level can set brighter zones */
-            memset(state->level.zone_bright_table, 0,
-                   (size_t)(state->level.num_zones * 2));
+            state->level.zone_bright_table = (int16_t *)calloc(1,
+                (size_t)(state->level.num_zones * 2 * sizeof(int16_t)));
         }
 
         printf("[GAME] Level parsed: %d zones\n", state->level.num_zones);

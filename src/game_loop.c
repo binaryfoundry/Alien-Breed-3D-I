@@ -183,15 +183,14 @@ void game_loop(GameState *state)
                     if ((bright_lo >> 8) != 0) {
                         /* Animated brightness handled by bright_anim_handler */
                     } else {
-                        state->level.zone_bright_table[z] = (uint8_t)bright_lo;
+                        state->level.zone_bright_table[z] = bright_lo;
                     }
 
                     if (state->level.num_zones > 0) {
                         if ((bright_hi >> 8) != 0) {
                             /* Animated */
                         } else {
-                            state->level.zone_bright_table[z + state->level.num_zones] =
-                                (uint8_t)bright_hi;
+                            state->level.zone_bright_table[z + state->level.num_zones] = bright_hi;
                         }
                     }
                 }

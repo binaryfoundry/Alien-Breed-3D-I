@@ -131,17 +131,18 @@ static inline int32_t rd32(const uint8_t *p) {
 /* -----------------------------------------------------------------------
  * SCALE table (from Macros.i)
  *
- * Maps Amiga dimming index d6 (0-32) to byte offset into the per-texture
- * 2048-byte brightness LUT.  Each brightness block is 64 bytes (32 words).
- *   d6=0 → offset 0 (dimmest)
- *   d6=32 → offset 1024 (brightest for typical walls)
+ * Amiga SCALE macro (Macros.i): d6 0..64 → LUT block offset. 32 blocks of 64 bytes.
+ *   d6=0  = closest (brightest), d6=64 = farthest (dimmest).
  * ----------------------------------------------------------------------- */
-static const uint16_t wall_scale_table[33] = {
+static const uint16_t wall_scale_table[65] = {
     64*0,  64*1,  64*1,  64*2,  64*2,  64*3,  64*3,  64*4,
     64*4,  64*5,  64*5,  64*6,  64*6,  64*7,  64*7,  64*8,
     64*8,  64*9,  64*9,  64*10, 64*10, 64*11, 64*11, 64*12,
-    64*12, 64*13, 64*13, 64*14, 64*14, 64*15, 64*15, 64*16,
-    64*16
+    64*12, 64*13, 64*13, 64*14, 64*14, 64*15, 64*15,        /* d6 0..30 */
+    64*16, 64*16, 64*17, 64*17, 64*18, 64*18, 64*19, 64*19,
+    64*20, 64*20, 64*21, 64*21, 64*22, 64*22, 64*23, 64*23,
+    64*24, 64*24, 64*25, 64*25, 64*26, 64*26, 64*27, 64*27,
+    64*28, 64*28, 64*29, 64*29, 64*30, 64*30, 64*31, 64*31, 64*31, 64*31  /* d6 31..64 */
 };
 
 /* Water animation: phase 0..255, advance every 2nd frame for a slow cycle. */
@@ -487,7 +488,7 @@ void renderer_rotate_object_pts(GameState *state)
  *   y_bot     - bottom of wall on screen
  *   tex_col   - texture column to sample (0-127)
  *   texture   - pointer to wall pixel data (past 2048-byte LUT header)
- *   amiga_d6  - Amiga dimming index (0-32): 0=dimmest, 32=brightest
+ *   amiga_d6  - Amiga dimming index (0-32): 0=brightest (close), 32=dimmest (far)
  *
  * Uses g_renderer.cur_wall_pal as the per-texture 2048-byte LUT.
  * ----------------------------------------------------------------------- */
@@ -517,9 +518,9 @@ static void draw_wall_column(int x, int y_top, int y_bot,
     int wall_height = cb - ct;
     if (wall_height <= 0) return;
 
-    /* Clamp d6 to SCALE table range */
+    /* Clamp d6 to SCALE table range (Amiga: 0..64) */
     if (amiga_d6 < 0) amiga_d6 = 0;
-    if (amiga_d6 > 32) amiga_d6 = 32;
+    if (amiga_d6 > 64) amiga_d6 = 64;
 
     /* Get the brightness block offset from the SCALE table */
     uint16_t lut_block_off = wall_scale_table[amiga_d6];
@@ -598,16 +599,31 @@ static void draw_wall_column(int x, int y_top, int y_bot,
             }
 
             /* Look up 16-bit Amiga color word from the LUT.
-             * LUT layout: 17 brightness blocks × 32 word entries.
-             * Offset: block_offset + texel * 2 (big-endian word). */
+             * LUT layout: 32 brightness blocks × 32 word entries (2048 bytes). */
             int lut_off = lut_block_off + texel5 * 2;
             uint16_t color_word = ((uint16_t)pal[lut_off] << 8) | pal[lut_off + 1];
 
             argb = amiga12_to_argb(color_word);
         } else {
-            /* No texture or no LUT - fallback gray based on brightness */
-            int gray = amiga_d6 * 255 / 32;
+            /* No texture or no LUT - fallback: d6=0 brightest, d6=64 darkest (Amiga range) */
+            int gray = (64 - amiga_d6) * 255 / 64;
+            if (gray < 0) gray = 0;
+            if (gray > 255) gray = 255;
             argb = 0xFF000000u | ((uint32_t)gray << 16) | ((uint32_t)gray << 8) | (uint32_t)gray;
+        }
+
+        /* Amiga-style distance shade: luminance ∝ (64-d6)/64. Min 16 so indoor distance gets very dark. */
+        {
+            int shade = (256 * (64 - amiga_d6)) / 64;
+            if (shade > 256) shade = 256;
+            if (shade < 16) shade = 16;
+            uint32_t r = (argb >> 16) & 0xFF;
+            uint32_t g = (argb >> 8) & 0xFF;
+            uint32_t b = argb & 0xFF;
+            r = (r * shade) >> 8;
+            g = (g * shade) >> 8;
+            b = (b * shade) >> 8;
+            argb = (argb & 0xFF000000u) | (r << 16) | (g << 8) | b;
         }
 
         buf[y * RENDER_STRIDE + x] = 2; /* tag: wall */
@@ -771,6 +787,12 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
     int32_t tex_over_z1 = (int32_t)tex_over_z1_64;
     int32_t tex_over_z2 = (int32_t)tex_over_z2_64;
 
+    /* Zone brightness offset (Amiga: zone_bright added to d6 before clamping).
+     * Level data uses 0..15; *2 gives moderate zone influence (0..30 range). */
+    int zone_d6 = brightness;
+    if (zone_d6 < 0) zone_d6 = 0;
+    zone_d6 *= 2;
+
     /* Draw columns left to right with perspective-correct interpolation */
     for (int col = 0; col < num_cols; col++) {
         int screen_x = scr_x1 + col;
@@ -784,6 +806,10 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
         if (inv_z <= 0) inv_z = 1;
         int32_t col_z = 65536 / inv_z;
         if (col_z < 1) col_z = 1;
+
+        /* Amiga formula: d6 = (col_z >> 7) + zone_bright. Higher d6 = darker. */
+        int amiga_d6 = (col_z >> 7) + zone_d6;
+        if (amiga_d6 > 64) amiga_d6 = 64;
 
         /* Project wall top/bottom at this depth.
          * Amiga ASM: screen_y = topofwall / z + 40.
@@ -799,15 +825,6 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
         /* ASM line 167: and.w HORAND,d6 - mask first
          * ASM line 170: add.w fromtile(pc),d6 - then add horizontal offset */
         int tex_col = ((int)(tex_t) & horand) + fromtile;
-
-        /* Distance-based brightness (Amiga convention).
-         *
-         * d6 = (z >> 7) + angbright, clamped to [0, 32].
-         * SCALE[d6] maps to palette LUT block offsets.
-         * d6=0 → dimmest, d6=32 → brightest (normal lit walls). */
-        int amiga_d6 = brightness + (int)(col_z >> 7);
-        if (amiga_d6 < 0) amiga_d6 = 0;
-        if (amiga_d6 > 32) amiga_d6 = 32;
 
         /* Switch walls: depth bias so they draw in front of the wall behind them. */
         int32_t depth_z = col_z;
@@ -857,7 +874,11 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
     if (row_dist == 0) row_dist = (y < center) ? -1 : 1;
     int abs_row_dist = (row_dist < 0) ? -row_dist : row_dist;
 
-    /* Use same scale as walls for depth/brightness. */
+    /* Zone brightness offset (same formula as walls). */
+    int zone_d6 = brightness;
+    if (zone_d6 < 0) zone_d6 = 0;
+    zone_d6 *= 2;
+
     int32_t fh_8 = floor_height >> 8;
     int32_t dist;
     if (abs_row_dist <= 3) {
@@ -869,10 +890,10 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
         if (dist > 30000) dist = 30000;
     }
 
-    int amiga_d6 = brightness + (int)(dist >> 7);
-    if (amiga_d6 < 0) amiga_d6 = 0;
-    if (amiga_d6 > 32) amiga_d6 = 32;
-    int gray = (32 - amiga_d6) * 255 / 32;
+    /* Amiga formula: d6 = (dist >> 7) + zone_bright. Higher d6 = darker. */
+    int amiga_d6 = (dist >> 7) + zone_d6;
+    if (amiga_d6 > 64) amiga_d6 = 64;
+    int gray = (64 - amiga_d6) * 255 / 64;
 
     /* ---- ASM pastfloorbright (line 6660) ----
      * d1 = d0 * cosval (change in U across whole width)
@@ -972,9 +993,9 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
             uint8_t texel = texture[tex_idx];
 
             if (rs->floor_pal) {
-                /* Use FloorPalScaled brightness LUT.
+                /* Use FloorPalScaled brightness LUT. Map d6 0..64 to level 0..14 (same scale as walls).
                  * Water: use a uniform mid brightness so the whole surface is even (no dark/light bands). */
-                int pal_level = amiga_d6 / 2;
+                int pal_level = (amiga_d6 * 14) / 64;
                 if (is_water) {
                     pal_level = 4;  /* bright water (LUT: low level = brighter) */
                 }
@@ -994,6 +1015,20 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
         } else {
             /* No texture - solid gray based on brightness */
             argb = 0xFF000000u | ((uint32_t)gray << 16) | ((uint32_t)gray << 8) | (uint32_t)gray;
+        }
+
+        /* Zone-based shade so brightness matches walls (same amiga_d6 curve, min 16). */
+        if (!is_water) {
+            int shade = (256 * (64 - amiga_d6)) / 64;
+            if (shade > 256) shade = 256;
+            if (shade < 16) shade = 16;
+            uint32_t r = (argb >> 16) & 0xFF;
+            uint32_t g = (argb >> 8) & 0xFF;
+            uint32_t b = argb & 0xFF;
+            r = (r * shade) >> 8;
+            g = (g * shade) >> 8;
+            b = (b * shade) >> 8;
+            argb = (argb & 0xFF000000u) | (r << 16) | (g << 8) | b;
         }
 
         /* Water: solid blue with light ripples; no dark bands (high base + min luminance). */
@@ -1830,15 +1865,15 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
     /* int16_t gfx_zone = rd16(ptr); */
     ptr += 2;
 
-    /* Brightness for this zone (from ZoneBrightTable if available).
-     * Table layout: byte per zone, upper floor at [zone + num_zones].
-     * Default 0 so dark corridors (zone_bright 0 in table) get as dark as the Amiga. */
+    /* Zone brightness from level (Amiga ZoneBright): 16-bit per zone, lower/upper at [zone] / [zone+num_zones].
+     * Added to d6 so higher value = darker zone; negative = brighter. Default 0. */
     int16_t zone_bright = 0;
     if (level->zone_bright_table && zone_id >= 0 && zone_id < level->num_zones) {
         int bright_idx = use_upper && level->num_zones > 0
             ? zone_id + level->num_zones : zone_id;
-        zone_bright = (int16_t)level->zone_bright_table[bright_idx];
+        zone_bright = level->zone_bright_table[bright_idx];
     }
+
 
     /* Deferred walls: collect during stream parsing, draw AFTER floors/ceilings.
      * This ensures floors draw on the black framebuffer first, then walls

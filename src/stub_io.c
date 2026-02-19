@@ -408,14 +408,14 @@ static void build_test_level_graphics(LevelState *level)
      *   [zone_graph_adds: NUM_ZONES * 8 bytes]  (lower gfx offset, upper gfx offset)
      *   [list_of_graph_rooms: (NUM_ZONES+1) * 8 bytes]  (zone_id, clip_off, flags, pad)
      *   [per-zone graphics: N * per_zone bytes]
-     *   [zone_bright_table: 2*NUM_ZONES bytes]
+     *   [zone_bright_table: 2*NUM_ZONES int16_t = 4*NUM_ZONES bytes]
      */
 
     /* per_zone: zone_num(2) + 4 walls(4*30) + floor entry(24) + roof entry(24) + sentinel(2) */
     int per_zone = 2 + (4 * 30) + 24 + 24 + 2;
     int graph_adds_size = NUM_ZONES * 8;
     int lgr_size = (NUM_ZONES + 1) * 8; /* +1 for -1 terminator */
-    int bright_table_size = 2 * NUM_ZONES;
+    int bright_table_size = 2 * NUM_ZONES * (int)sizeof(int16_t);
     int total = graph_adds_size + lgr_size + NUM_ZONES * per_zone + bright_table_size + 256;
 
     uint8_t *buf = (uint8_t *)calloc(1, (size_t)total);
@@ -502,11 +502,11 @@ static void build_test_level_graphics(LevelState *level)
         wr16(gfx + p, -1);
     }
 
-    /* ---- Zone brightness table ---- */
+    /* ---- Zone brightness table (16-bit per zone) ---- */
     {
-        uint8_t *bt = buf + off_bright;
+        int16_t *bt = (int16_t *)(buf + off_bright);
         for (int z = 0; z < NUM_ZONES; z++) {
-            bt[z] = 8;                        /* Lower floor brightness */
+            bt[z] = 8;                         /* Lower floor brightness */
             bt[z + NUM_ZONES] = 8;             /* Upper floor brightness */
         }
     }
@@ -514,7 +514,7 @@ static void build_test_level_graphics(LevelState *level)
     level->graphics = buf;
     level->zone_graph_adds = buf;              /* graph adds at start of buffer */
     level->list_of_graph_rooms = buf + off_lgr;
-    level->zone_bright_table = buf + off_bright;
+    level->zone_bright_table = (int16_t *)(buf + off_bright);
 
     printf("[IO] Graphics: zone_graph_adds@0, lgr@%d, gfx_data@%d, bright@%d\n",
            off_lgr, off_gfx_data, off_bright);

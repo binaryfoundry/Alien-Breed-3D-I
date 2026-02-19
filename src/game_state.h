@@ -139,7 +139,7 @@ typedef struct {
     uint8_t *connect_table;
     uint8_t *water_list;          /* WaterList - water zones + oscillation data */
     uint8_t *bright_anim_list;    /* BrightAnimList - animated brightness zones */
-    uint8_t *zone_bright_table;   /* ZoneBrightTable - current brightness per zone */
+    int16_t *zone_bright_table;   /* ZoneBrightTable - 16-bit per zone (lower + upper = 2*num_zones) */
     uint8_t *workspace;           /* WorkSpace bitmask for zone visibility */
     uint8_t *list_of_graph_rooms; /* ListOfGraphRooms - rooms visible from current */
     uint8_t *floor_tile;          /* floortile - 256x256 floor texture sheet */
