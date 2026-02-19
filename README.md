@@ -41,13 +41,9 @@ Place all game data in **`data/`** (at the repository root). Create this structu
 
 | Path | Description |
 |------|-------------|
-| **`includes/floortile`** | Floor texture (raw 256×256 8-bit). Used to detect the data root. |
-| **`includes/FloorPalScaled`** | Floor brightness palette (or `pal/FloorPalScaled.s` as fallback). |
-| **`includes/walls/`** | Wall textures. One file per entry (see list below). |
 | **`includes/`** | Sprites and gun: `.wad`, `.ptr`; gun also uses `.pal` from `includes/` or `pal/`. |
-| **`levels/level_a/`**, **`level_b/`**, … | Level data for level 0, 1, … (see below). |
-| **`disk/includes/`** | Optional alternate path for gun/sprites (Amiga-style path). |
-| **`math/bigsine`** | Optional 4096-entry sine table (binary). If missing, the port generates one. |
+| **`levels/`**, **`level_a/`**, … | Level data for level 0, 1, … (see below). |
+| **`sounds/`** | All sounds. |
 
 **Wall textures** in `includes/walls/` (exact filenames):
 
@@ -57,9 +53,9 @@ Each `.wad` can be raw or **=SB= compressed**; the loader decompresses automatic
 
 **Levels** (per level index 0, 1, … → `level_a`, `level_b`, …):
 
-- **`levels/level_a/twolev.bin`** – level data  
-- **`levels/level_a/twolev.graph.bin`** – level graphics (walls, floors, roofs)  
-- **`levels/level_a/twolev.clips`** – clip data  
+- **`levels/level_a/twolev.bin`** – level data
+- **`levels/level_a/twolev.graph.bin`** – level graphics (walls, floors, roofs)
+- **`levels/level_a/twolev.clips`** – clip data
 
 If a level file is missing, the port falls back to a small procedural test level.
 
