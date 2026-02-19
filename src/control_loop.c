@@ -256,8 +256,8 @@ void play_the_game(GameState *state)
      *   ObjectPoints, PLR1_Obj, PLR2_Obj
      * And assigns clip data to zone graph lists.
      */
-    if (state->level.data && state->level.graphics && !state->level.points) {
-        /* Pointers not yet set by IO loader - parse from raw data */
+    /* Parse when level was loaded from file (raw data): zone_adds/points are only set by parse or stub. */
+    if (state->level.data && state->level.graphics && !state->level.zone_adds) {
         level_parse(&state->level);
 
         /* Assign clip data to zone graph lists */

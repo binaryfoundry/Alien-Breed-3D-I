@@ -520,6 +520,24 @@ static void build_test_level_graphics(LevelState *level)
         memcpy(level->zone_bright_table, buf + off_bright, 2 * NUM_ZONES * sizeof(int16_t));
     }
 
+    /* Door table for test level: one door in zone 0 (wall between room 0 and 1).
+     * Opens when player in zone 0 or 1 presses space. Format: 16 bytes per entry, terminator zone_id -1. */
+    {
+        uint8_t *door_buf = (uint8_t *)malloc(32);
+        if (door_buf) {
+            int32_t closed_pos = 96 * 256;  /* door_max*256 = closed (matches ROOF_H magnitude 24576) */
+            wr16(door_buf + 0, 0);             /* zone_id = 0 */
+            wr16(door_buf + 2, 0);             /* door_type = 0 (space/switch) */
+            wr32(door_buf + 4, closed_pos);   /* door_pos = closed */
+            wr16(door_buf + 8, 0);             /* door_vel = 0 */
+            wr16(door_buf + 10, 96);           /* door_max */
+            wr16(door_buf + 12, 0);            /* timer */
+            wr16(door_buf + 14, 0);            /* door_flags (0 = any switch or space in zone) */
+            wr16(door_buf + 16, -1);           /* terminator: next zone_id = -1 */
+            level->door_data = door_buf;
+        }
+    }
+
     printf("[IO] Graphics: zone_graph_adds@0, lgr@%d, gfx_data@%d, bright@%d\n",
            off_lgr, off_gfx_data, off_bright);
 }

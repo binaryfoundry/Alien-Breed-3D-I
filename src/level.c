@@ -68,6 +68,11 @@ int level_parse(LevelState *level)
      * and switch_offset to test doors and switches.
      */
     int32_t door_offset = read_long(lg + 0);
+    int32_t lift_offset = read_long(lg + 4);
+    int32_t switch_offset = read_long(lg + 8);
+    int32_t zone_graph_offset = read_long(lg + 12);
+    printf("[LEVEL] Graphics header: door=%ld lift=%ld switch=%ld zone_graph=%ld\n",
+           (long)door_offset, (long)lift_offset, (long)switch_offset, (long)zone_graph_offset);
     if (door_offset > 0) {
         level->door_data = lg + door_offset;
     } else {
@@ -75,15 +80,12 @@ int level_parse(LevelState *level)
     }
 
     /* Long 4: Offset to lifts */
-    int32_t lift_offset = read_long(lg + 4);
-    level->lift_data = lg + lift_offset;
+    level->lift_data = (lift_offset > 0) ? (lg + lift_offset) : NULL;
 
     /* Long 8: Offset to switches */
-    int32_t switch_offset = read_long(lg + 8);
-    level->switch_data = lg + switch_offset;
+    level->switch_data = (switch_offset > 0) ? (lg + switch_offset) : NULL;
 
     /* Long 12: Offset to zone graph adds */
-    int32_t zone_graph_offset = read_long(lg + 12);
     level->zone_graph_adds = lg + zone_graph_offset;
 
     /* Zone offset table starts at byte 16 of graphics data */

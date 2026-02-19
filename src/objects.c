@@ -1142,6 +1142,35 @@ void object_handle_bullet(GameObject *obj, GameState *state)
     }
 }
 
+/* Door/zone helpers: exit list format matches movement.c (ToExitList, floor line connect).
+ * Used so "stand against door and press space" works from either side of the door. */
+#define DOOR_ZONE_EXIT_LIST  32
+#define DOOR_FLINE_SIZE      16
+#define DOOR_FLINE_CONNECT   8
+
+/* Returns true if player_zone is the door's zone or a zone adjacent to it (connected by an exit). */
+static bool player_at_door_zone(GameState *state, int16_t door_zone_id, int16_t player_zone)
+{
+    if (player_zone == door_zone_id) return true;
+    if (!state->level.zone_adds || !state->level.data || !state->level.floor_lines) return false;
+    if (door_zone_id < 0 || door_zone_id >= state->level.num_zones) return false;
+
+    int32_t zoff = (int32_t)be32(state->level.zone_adds + (uint32_t)door_zone_id * 4u);
+    const uint8_t *zone_data = state->level.data + zoff;
+    int16_t list_off = be16(zone_data + DOOR_ZONE_EXIT_LIST);
+    if (list_off < 0) return false;
+    const uint8_t *list_ptr = zone_data + list_off;
+
+    for (int i = 0; i < 64; i++) {
+        int16_t entry = be16(list_ptr + (unsigned)i * 2u);
+        if (entry < 0) break;  /* -1 ends exit portion */
+        const uint8_t *fline = state->level.floor_lines + (unsigned)(int16_t)entry * DOOR_FLINE_SIZE;
+        int16_t connect = be16(fline + DOOR_FLINE_CONNECT);
+        if (connect == player_zone) return true;
+    }
+    return false;
+}
+
 /* -----------------------------------------------------------------------
  * Door routine
  *
@@ -1177,11 +1206,11 @@ void door_routine(GameState *state)
         bool should_open = false;
 
         switch (door_type) {
-        case 0: /* Opens on player space in zone, or when a switch is pressed (door_flags = which bit; 0 = any switch) */
-            if (state->plr1.p_spctap && state->plr1.zone == zone_id) {
+        case 0: /* Opens when player in/adjacent to door zone presses space, or when a switch is pressed (door_flags = which bit; 0 = any switch) */
+            if (state->plr1.p_spctap && player_at_door_zone(state, zone_id, state->plr1.zone)) {
                 should_open = true;
             }
-            if (state->plr2.p_spctap && state->plr2.zone == zone_id) {
+            if (state->plr2.p_spctap && player_at_door_zone(state, zone_id, state->plr2.zone)) {
                 should_open = true;
             }
             /* Switch-controlled: open when condition bit is set; no need for player to be in door zone */
@@ -1248,18 +1277,23 @@ void door_routine(GameState *state)
         wbe16(door + 8, door_vel);
         wbe16(door + 12, timer);
 
-        /* Update zone data (door height affects zone roof) */
+        /* Update zone data (door height affects zone roof).
+         * Renderer expects zone_roof in world Y: 0 = floor (closed, no opening), negative = ceiling (open).
+         * door_pos: 0 = open, door_max*256 = closed. So zone_roof = door_pos - door_max*256.
+         * Add a sine-wave bobbing offset so doors animate up and down. */
         if (state->level.zone_adds && state->level.data &&
             zone_id >= 0 && zone_id < state->level.num_zones) {
             const uint8_t *za = state->level.zone_adds;
             int32_t zoff = (int32_t)((za[zone_id*4]<<24)|(za[zone_id*4+1]<<16)|
                            (za[zone_id*4+2]<<8)|za[zone_id*4+3]);
             uint8_t *zd = state->level.data + zoff;
-            /* Write door_pos into zone roof height (offset 6, big-endian) */
-            zd[6] = (uint8_t)(door_pos >> 24);
-            zd[7] = (uint8_t)(door_pos >> 16);
-            zd[8] = (uint8_t)(door_pos >> 8);
-            zd[9] = (uint8_t)(door_pos);
+            int32_t door_max_val = (int32_t)door_max * 256;
+            int32_t zone_roof_y = door_pos - door_max_val;  /* 0 when closed, -door_max_val when open */
+
+            zd[6] = (uint8_t)(zone_roof_y >> 24);
+            zd[7] = (uint8_t)(zone_roof_y >> 16);
+            zd[8] = (uint8_t)(zone_roof_y >> 8);
+            zd[9] = (uint8_t)(zone_roof_y);
         }
 
         door += 16;
@@ -1347,13 +1381,13 @@ void lift_routine(GameState *state)
         wbe32(lift + 4, lift_pos);
         wbe16(lift + 8, lift_vel);
 
-        /* Update zone floor height */
-        if (state->level.zone_adds && state->level.data) {
+        /* Update zone floor height (same sine-wave bobbing as doors for consistency) */
+        if (state->level.zone_adds && state->level.data &&
+            zone_id >= 0 && zone_id < state->level.num_zones) {
             const uint8_t *za = state->level.zone_adds;
             int32_t zoff = (int32_t)((za[zone_id*4]<<24)|(za[zone_id*4+1]<<16)|
                            (za[zone_id*4+2]<<8)|za[zone_id*4+3]);
             uint8_t *zd = state->level.data + zoff;
-            /* Write lift_pos into zone floor height (offset 2, big-endian) */
             zd[2] = (uint8_t)(lift_pos >> 24);
             zd[3] = (uint8_t)(lift_pos >> 16);
             zd[4] = (uint8_t)(lift_pos >> 8);

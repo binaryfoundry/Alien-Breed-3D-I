@@ -1847,6 +1847,8 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
  *   +0: draw_mode (word) - 0=before water, 1=after water, 2=full room
  * ----------------------------------------------------------------------- */
 #define MAX_DOOR_ENTRIES 64
+#define MAX_LIFT_ENTRIES 64
+#define LIFT_ENTRY_SIZE  20
 
 static int zone_has_door(const uint8_t *door_data, int16_t zone_id)
 {
@@ -1860,6 +1862,19 @@ static int zone_has_door(const uint8_t *door_data, int16_t zone_id)
     return 0;  /* Safety: avoid reading past buffer if format is wrong */
 }
 
+/* Zones are "tagged" as lift zones by appearing in the lift table (first word = zone_id). */
+static int zone_has_lift(const uint8_t *lift_data, int16_t zone_id)
+{
+    if (!lift_data) return 0;
+    for (int i = 0; i < MAX_LIFT_ENTRIES; i++) {
+        int16_t l_zone = rd16(lift_data);
+        if (l_zone < 0) return 0;
+        if (l_zone == zone_id) return 1;
+        lift_data += LIFT_ENTRY_SIZE;
+    }
+    return 0;
+}
+
 void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
 {
     RendererState *r = &g_renderer;
@@ -1867,11 +1882,13 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
 
     if (!level->data || !level->zone_adds || !level->zone_graph_adds) return;
 
-    /* Get zone data */
+    /* Get zone data (same level->data that door_routine/lift_routine write to each frame). */
     int32_t zone_off = rd32(level->zone_adds + zone_id * 4);
     const uint8_t *zone_data = level->data + zone_off;
 
-    /* Zone heights: upper room uses its own floor/roof stored at offsets +10/+14. */
+    /* Zone heights: upper room uses its own floor/roof stored at offsets +10/+14.
+     * For lower room, ZD_FLOOR (2) and ZD_ROOF (6) are written each frame by door_routine and
+     * lift_routine; re-read them when this zone is tagged as door or lift so we see the sine/lift. */
     int32_t zone_floor, zone_roof;
     if (use_upper) {
         int32_t uf = rd32(zone_data + 10);  /* ZD_UPPER_FLOOR */
@@ -1882,6 +1899,11 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
     } else {
         zone_floor = rd32(zone_data + 2);   /* ZD_FLOOR (ToZoneFloor) */
         zone_roof  = rd32(zone_data + 6);   /* ZD_ROOF  (ToZoneRoof)  */
+        /* Door/lift zones: use live values (door sine wave and lift position write here each frame) */
+        if (zone_has_door(level->door_data, zone_id) || zone_has_lift(level->lift_data, zone_id)) {
+            zone_floor = rd32(zone_data + 2);
+            zone_roof  = rd32(zone_data + 6);
+        }
     }
 
     /* Get zone graphics data (the polygon list for this zone).
@@ -1985,20 +2007,24 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 int16_t wall_height_for_tex = (int16_t)((botwall - topwall) >> 8);
                 if (wall_height_for_tex < 1) wall_height_for_tex = 1;
                 /* Door override: clip wall to door opening and add V tex offset. Skip switch walls
-                 * (tex_id 11) so their Y texcoords stay correct; they are panels, not full-height doors. */
+                 * (tex_id 11) so their Y texcoords stay correct; they are panels, not full-height doors.
+                 * Re-read zone roof from level->data here so we see door_routine's updates (doors/lifts
+                 * write ZD_ROOF each frame; this is the same buffer we read from at zone start). */
                 int32_t door_yoff_add = 0;
                 if (zone_has_door_flag && tex_id != SWITCHES_WALL_TEX_ID) {
-                    int32_t zone_roof_rel = zone_roof - y_off;
-                    int32_t zone_floor_rel = zone_floor - y_off;
+                    int32_t live_zone_roof = rd32(zone_data + 6);   /* ZD_ROOF: door/lift write this */
+                    int32_t live_zone_floor = rd32(zone_data + 2);   /* ZD_FLOOR */
+                    int32_t zone_roof_rel = live_zone_roof - y_off;
+                    int32_t zone_floor_rel = live_zone_floor - y_off;
                     int32_t top_abs = topwall + y_off, bot_abs = botwall + y_off;
                     const int32_t zone_match_margin = 512;
-                    if (top_abs >= zone_roof - zone_match_margin &&
-                        bot_abs <= zone_floor + zone_match_margin) {
+                    if (top_abs >= live_zone_roof - zone_match_margin &&
+                        bot_abs <= live_zone_floor + zone_match_margin) {
                         wall_top = (int16_t)(zone_roof_rel >> 8);
                         wall_bot = (int16_t)(zone_floor_rel >> 8);
                         int32_t wall_full_h = botwall - topwall;
                         if (wall_full_h > 0) {
-                            int32_t door_top_offset = zone_roof - topwall - y_off;
+                            int32_t door_top_offset = live_zone_roof - topwall - y_off;
                             int rows = 1 << use_valshift;
                             door_yoff_add = (int32_t)((int64_t)door_top_offset * rows / wall_full_h);
                         }
@@ -2512,7 +2538,6 @@ void renderer_draw_display(GameState *state)
     if ((++water_tick & 1) == 0) {
         g_water_phase = (g_water_phase + 1) & 255;
     }
-
     /* 2. Setup view transform (from AB3DI.s DrawDisplay lines 3399-3438) */
     PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
 
