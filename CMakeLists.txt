@@ -5,11 +5,14 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 # -----------------------------------------------------------------------
-# Data: ensure data/pal exists and copy from amiga/pal if present
+# Data: ensure data/pal exists and copy from amiga/pal and amiga/data/pal
 # -----------------------------------------------------------------------
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/data/pal")
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/amiga/pal")
   file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/amiga/pal" DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/data")
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/amiga/data/pal")
+  file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/amiga/data/pal" DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/data")
 endif()
 
 # -----------------------------------------------------------------------
