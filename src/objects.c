@@ -1154,7 +1154,7 @@ void object_handle_bullet(GameObject *obj, GameState *state)
  *   8: door velocity (word) - current speed
  *  10: door max (word) - maximum opening height
  *  12: timer (word) - close delay
- *  14: flags (word)
+ *  14: flags (word) - for type 0: condition mask; use same value as switch bit_mask to link; 0 = any switch
  * ----------------------------------------------------------------------- */
 void door_routine(GameState *state)
 {
@@ -1172,16 +1172,25 @@ void door_routine(GameState *state)
         int16_t door_vel = be16(door + 8);
         int16_t door_max = be16(door + 10);
         int16_t timer = be16(door + 12);
+        uint16_t door_flags = (uint16_t)be16(door + 14);
 
         bool should_open = false;
 
         switch (door_type) {
-        case 0: /* Opens on player space key */
+        case 0: /* Opens on player space in zone, or when a switch is pressed (door_flags = which bit; 0 = any switch) */
             if (state->plr1.p_spctap && state->plr1.zone == zone_id) {
                 should_open = true;
             }
             if (state->plr2.p_spctap && state->plr2.zone == zone_id) {
                 should_open = true;
+            }
+            /* Switch-controlled: open when condition bit is set; no need for player to be in door zone */
+            if (!should_open) {
+                if (door_flags != 0) {
+                    if (game_conditions & door_flags) should_open = true;
+                } else {
+                    if (game_conditions != 0) should_open = true;  /* any switch opens when flags not set */
+                }
             }
             break;
         case 1: /* Opens on condition bit */
@@ -1226,9 +1235,9 @@ void door_routine(GameState *state)
                 door_vel = 0;
             }
         } else if (!should_open && door_pos < (int32_t)door_max * 256) {
-            /* Close timer */
+            /* Close timer: type 0 (space) and condition doors (1,2,3) all close when should_open is false */
             timer -= state->temp_frames;
-            if (timer <= 0 && door_type == 0) {
+            if (timer <= 0) {
                 door_vel = 4; /* Close speed */
                 timer = 0;
             }
@@ -1299,6 +1308,15 @@ void lift_routine(GameState *state)
             should_move = true;
             break;
         case 3: /* Never moves */
+            break;
+        case 4: /* Moves when condition bit set (same bits as door type 1: 0x900) */
+            if (game_conditions & 0x900) should_move = true;
+            break;
+        case 5: /* Moves when condition bit set (same as door type 2: 0x400) */
+            if (game_conditions & 0x400) should_move = true;
+            break;
+        case 6: /* Moves when condition bit set (same as door type 3: 0x200) */
+            if (game_conditions & 0x200) should_move = true;
             break;
         }
 

@@ -39,8 +39,34 @@ int level_parse(LevelState *level)
     uint8_t *ld = level->data;      /* LEVELDATA */
     uint8_t *lg = level->graphics;  /* LEVELGRAPHICS */
 
-    /* ---- Graphics data header ---- */
-    /* Long 0: Offset to doors (0 = no door table) */
+    /* ---- Graphics data header (LEVELGRAPHICS) ----
+     * Byte  0-3:  door_offset   (long)  offset from lg to door table; 0 = no doors
+     * Byte  4-7:  lift_offset   (long)  offset to lift table
+     * Byte  8-11: switch_offset (long)  offset to switch table
+     * Byte 12-15: zone_graph_offset (long)  offset to zone graph adds
+     * Byte 16+:   zone_adds     (num_zones * 4 bytes)  each long = offset into LEVELDATA to that zone's zone data
+     *
+     * Door table (at lg + door_offset). Entries 16 bytes each, terminated by zone_id < 0.
+     *   0-1:  zone_id (int16)   zone this door affects (roof height written here)
+     *   2-3:  door_type (int16) 0=space/switch, 1=cond 0x900, 2=0x400, 3=0x200, 4=always open, 5=never
+     *   4-7:  door_pos (int32)  current opening (0=open, door_max*256=closed)
+     *   8-9:  door_vel (int16)  open/close speed
+     *  10-11: door_max (int16)  max opening height (logical units * 256 when closed)
+     *  12-13: timer (int16)     close delay
+     *  14-15: door_flags (uint16) for type 0: condition bit mask; 0 = any switch opens this door
+     *
+     * Switch table (at lg + switch_offset). Entries 14 bytes each, terminated by zone_id < 0.
+     *   0-1:  zone_id (int16)   zone the switch is in
+     *   2-3:  (reserved; byte 3 used as cooldown)
+     *   4-5:  bit_mask (uint16) condition bit toggled when pressed; match door_flags for type 0 doors
+     *   6-9:  gfx_offset (long) offset into lg to switch wall's first word (for on/off patch)
+     *  10-11: sw_x (int16)     switch position X (for facing check)
+     *  12-13: sw_z (int16)     switch position Z
+     *
+     * Note: The procedural test level (stub) does not use this header and leaves door_data/switch_data
+     * NULL. Use a real level file (e.g. levels/level_a/twolev.graph.bin) with non-zero door_offset
+     * and switch_offset to test doors and switches.
+     */
     int32_t door_offset = read_long(lg + 0);
     if (door_offset > 0) {
         level->door_data = lg + door_offset;
