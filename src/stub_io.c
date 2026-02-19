@@ -502,7 +502,7 @@ static void build_test_level_graphics(LevelState *level)
         wr16(gfx + p, -1);
     }
 
-    /* ---- Zone brightness table (16-bit per zone) ---- */
+    /* ---- Zone brightness table (16-bit per zone) - in buffer for layout, then our own copy ---- */
     {
         int16_t *bt = (int16_t *)(buf + off_bright);
         for (int z = 0; z < NUM_ZONES; z++) {
@@ -514,7 +514,11 @@ static void build_test_level_graphics(LevelState *level)
     level->graphics = buf;
     level->zone_graph_adds = buf;              /* graph adds at start of buffer */
     level->list_of_graph_rooms = buf + off_lgr;
-    level->zone_bright_table = (int16_t *)(buf + off_bright);
+    /* Owned buffer so we can overwrite with resolved (including animated) brightness each frame */
+    level->zone_bright_table = (int16_t *)malloc(2 * NUM_ZONES * sizeof(int16_t));
+    if (level->zone_bright_table) {
+        memcpy(level->zone_bright_table, buf + off_bright, 2 * NUM_ZONES * sizeof(int16_t));
+    }
 
     printf("[IO] Graphics: zone_graph_adds@0, lgr@%d, gfx_data@%d, bright@%d\n",
            off_lgr, off_gfx_data, off_bright);

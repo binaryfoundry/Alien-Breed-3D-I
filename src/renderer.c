@@ -788,10 +788,8 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
     int32_t tex_over_z2 = (int32_t)tex_over_z2_64;
 
     /* Zone brightness offset (Amiga: zone_bright added to d6 before clamping).
-     * Level data uses 0..15; *2 gives moderate zone influence (0..30 range). */
-    int zone_d6 = brightness;
-    if (zone_d6 < 0) zone_d6 = 0;
-    zone_d6 *= 2;
+     * Level 0..15 *2; animated zones use -10..10 from bright_anim_values, *2 gives -20..20. */
+    int zone_d6 = brightness * 2;
 
     /* Draw columns left to right with perspective-correct interpolation */
     for (int col = 0; col < num_cols; col++) {
@@ -809,6 +807,7 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
 
         /* Amiga formula: d6 = (col_z >> 7) + zone_bright. Higher d6 = darker. */
         int amiga_d6 = (col_z >> 7) + zone_d6;
+        if (amiga_d6 < 0) amiga_d6 = 0;
         if (amiga_d6 > 64) amiga_d6 = 64;
 
         /* Project wall top/bottom at this depth.
@@ -875,9 +874,8 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
     int abs_row_dist = (row_dist < 0) ? -row_dist : row_dist;
 
     /* Zone brightness offset (same formula as walls). */
-    int zone_d6 = brightness;
-    if (zone_d6 < 0) zone_d6 = 0;
-    zone_d6 *= 2;
+    /* Zone brightness: level 0..15 *2; animated -10..10 *2. */
+    int zone_d6 = brightness * 2;
 
     int32_t fh_8 = floor_height >> 8;
     int32_t dist;
@@ -892,6 +890,7 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
 
     /* Amiga formula: d6 = (dist >> 7) + zone_bright. Higher d6 = darker. */
     int amiga_d6 = (dist >> 7) + zone_d6;
+    if (amiga_d6 < 0) amiga_d6 = 0;
     if (amiga_d6 > 64) amiga_d6 = 64;
     int gray = (64 - amiga_d6) * 255 / 64;
 

@@ -281,6 +281,11 @@ void play_the_game(GameState *state)
             state->level.zone_bright_table = (int16_t *)calloc(1,
                 (size_t)(state->level.num_zones * 2 * sizeof(int16_t)));
         }
+        /* Initialize brightness animation state (Amiga brightAnimTable indices) */
+        memset(state->level.bright_anim_indices, 0, sizeof(state->level.bright_anim_indices));
+        state->level.bright_anim_values[0] = 0;
+        state->level.bright_anim_values[1] = 0;
+        state->level.bright_anim_values[2] = 0;
 
         printf("[GAME] Level parsed: %d zones\n", state->level.num_zones);
     } else if (state->level.points) {

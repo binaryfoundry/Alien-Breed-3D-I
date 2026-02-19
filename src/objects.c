@@ -1463,25 +1463,47 @@ void do_water_anims(GameState *state)
     }
 }
 
+#define BRIGHT_ANIM_SENTINEL 999
+
+/* Advance one brightness animation; returns current value, updates index. */
+static int16_t bright_anim_advance(const int16_t *table, unsigned int *idx)
+{
+    int16_t val = table[*idx];
+    if (val == BRIGHT_ANIM_SENTINEL) {
+        *idx = 0;
+        val = table[0];
+        (*idx)++;
+    } else {
+        (*idx)++;
+    }
+    return val;
+}
+
 /* -----------------------------------------------------------------------
  * Brightness animation handler
  *
- * Translated from Anims.s BrightAnimHandler (line ~197-222).
+ * Translated from Anims.s BrightAnimHandler (line ~197-222) and AB3DI.s
+ * doneTalking zone brightness resolution. Two mechanisms:
+ *
+ * 1) Amiga encoding: zone brightness word high byte 1/2/3 = use
+ *    brightAnimTable[0/1/2] (pulse, flicker, fire). We advance the three
+ *    global anims each tick and store current values in bright_anim_values.
+ *
+ * 2) Optional bright_anim_list from level: per-zone list (future use).
  * ----------------------------------------------------------------------- */
 void bright_anim_handler(GameState *state)
 {
-    /* The brightness animation system modifies zone brightness values
-     * based on one of three animation curves: pulse, flicker, fire_flicker.
-     *
-     * Each animated zone has:
-     * - A pointer to an animation table (pulse_anim / flicker_anim / fire_flicker_anim)
-     * - A current index into the table
-     * - A base brightness value
-     *
-     * When the table value is 999, loop back to start. */
-    if (!state->level.bright_anim_list) return;
+    LevelState *lev = &state->level;
 
-    uint8_t *ba = state->level.bright_anim_list;
+    /* Advance the three global anims (Amiga brightAnimTable). */
+    lev->bright_anim_values[0] = bright_anim_advance(pulse_anim, &lev->bright_anim_indices[0]);
+    lev->bright_anim_values[1] = bright_anim_advance(flicker_anim, &lev->bright_anim_indices[1]);
+    lev->bright_anim_values[2] = bright_anim_advance(fire_flicker_anim, &lev->bright_anim_indices[2]);
+
+    /* Optional: per-zone list from level (if present). */
+    if (!lev->bright_anim_list) return;
+
+    uint8_t *ba = lev->bright_anim_list;
     while (1) {
         int16_t zone_id = (int16_t)((ba[0] << 8) | ba[1]);
         if (zone_id < 0) break;
@@ -1490,32 +1512,27 @@ void bright_anim_handler(GameState *state)
         int16_t anim_idx  = (int16_t)((ba[4] << 8) | ba[5]);
         int16_t base_bright = (int16_t)((ba[6] << 8) | ba[7]);
 
-        /* Select animation table */
         const int16_t *table = pulse_anim;
         if (anim_type == 1) table = flicker_anim;
         else if (anim_type == 2) table = fire_flicker_anim;
 
-        /* Read current value */
         int16_t val = table[anim_idx];
-        if (val == 999) {
+        if (val == BRIGHT_ANIM_SENTINEL) {
             anim_idx = 0;
             val = table[0];
         }
-
         anim_idx++;
         ba[4] = (uint8_t)(anim_idx >> 8);
         ba[5] = (uint8_t)(anim_idx);
 
-        /* Apply: zone brightness = base_bright + val */
         int16_t final_bright = (int16_t)(base_bright + val);
         if (final_bright < 0) final_bright = 0;
         if (final_bright > 255) final_bright = 255;
 
-        if (state->level.zone_bright_table) {
-            state->level.zone_bright_table[zone_id] = (int16_t)final_bright;
+        if (lev->zone_bright_table) {
+            lev->zone_bright_table[zone_id] = (int16_t)final_bright;
         }
-
-        ba += 8; /* next entry */
+        ba += 8;
     }
 }
 
