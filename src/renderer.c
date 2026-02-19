@@ -90,10 +90,10 @@ static const int sprite_feet_rows_from_bottom_by_vect[MAX_SPRITE_TYPES] = {
  * At RENDER_SCALE we have 96*RENDER_SCALE columns, so step must be (d1>>6)/RENDER_SCALE
  * to keep the same total U range. Integer: use shift 6 + RENDER_SCALE_LOG2. */
 #define FLOOR_STEP_SHIFT  (6 + RENDER_SCALE_LOG2)
-/* Extra pixels to extend floor/ceiling beyond polygon edge (0 = strict bounds; 1 = close sub-pixel gaps). */
+/* Extra pixels to extend beyond polygon edge (ceiling needs it at wall join; floor does not). */
 #define FLOOR_EDGE_EXTRA  0
-#define CEILING_EDGE_EXTRA 0
-#define PORTAL_EDGE_EXTRA 0
+#define CEILING_EDGE_EXTRA 3
+#define PORTAL_EDGE_EXTRA 1
 
 /* Raise view height for rendering only (gameplay uses plr->yoff unchanged).
  * Makes the camera draw from higher so the floor appears further away, matching Amiga. */
@@ -493,6 +493,7 @@ void renderer_rotate_object_pts(GameState *state)
  * Uses g_renderer.cur_wall_pal as the per-texture 2048-byte LUT.
  * ----------------------------------------------------------------------- */
 static void draw_wall_column(int x, int y_top, int y_bot,
+                             int y_top_tex,
                              int tex_col, const uint8_t *texture,
                              int amiga_d6,
                              uint8_t valand, uint8_t valshift,
@@ -550,22 +551,19 @@ static void draw_wall_column(int x, int y_top, int y_bot,
     /* strip_offset = strip_index * 2 << valshift  =  strip_index << (valshift+1) */
     int strip_offset = strip_index << (valshift + 1);
 
-    /* Texture step from world wall height. Repeats = wall_height_world/64.
-     * Step maps (1<<valshift)*(h/64) texel rows over (y_bot-y_top) pixels.
-     * For textures with fewer than 64 rows (e.g. switches 32 rows), use a minimum
-     * h of 64 so one full texture repeat maps to the wall; otherwise a short wall
-     * (e.g. h=32) would only show the middle band and cut off top/bottom. */
-    int wall_pixels = yb - yt;
+    /* Texture mapping uses logical wall height (y_top_tex..y_bot). Caller may pass y_top one row
+     * above projected top to close ceiling gaps; tex_step and tex_y use y_top_tex so the extra
+     * row samples one texel above yoff (no stretch). */
+    int wall_pixels = yb - y_top_tex;
     if (wall_pixels < 1) wall_pixels = 1;
     int rows = 1 << valshift;
     int h = (int)wall_height_world;
     if (h < 1) h = 1;
     if (rows < 64 && h < 64) h = 64;  /* ensure full texture height visible on short walls */
     int32_t tex_step = (int32_t)(((int64_t)rows * (int64_t)h << 16) / (64 * wall_pixels));
-    /* Amiga: totalyoff is added to row index then masked with VALAND (WallRoutine3 line 1803–1804).
-     * So yoff is in texture row units and must wrap: use totalyoff & valand. */
+    /* Amiga: totalyoff is added to row index then masked with VALAND (WallRoutine3 line 1803–1804). */
     int32_t yoff = (int32_t)((unsigned)totalyoff & (unsigned)valand);
-    int32_t tex_y = (ct - y_top) * tex_step + ((int32_t)yoff << 16);
+    int32_t tex_y = (ct - y_top_tex) * tex_step + ((int32_t)yoff << 16);
 
     int16_t *depth = g_renderer.depth_buffer;
     int16_t col_z16 = (col_z > 32767) ? 32767 : (int16_t)col_z;
@@ -816,6 +814,9 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
          * Scale by RENDER_HEIGHT/80 for doubled resolution. */
         int y_top = (int)((int32_t)top * PROJ_Y_SCALE * RENDER_SCALE / col_z) + (RENDER_HEIGHT / 2);
         int y_bot = (int)((int32_t)bot * PROJ_Y_SCALE * RENDER_SCALE / col_z) + (RENDER_HEIGHT / 2);
+        /* Extend wall top up by 3 pixels so it meets ceiling (closes rounding gaps). */
+        int ext = (y_top >= 3) ? 3 : (y_top >= 2) ? 2 : (y_top >= 1) ? 1 : 0;
+        int y_top_draw = y_top - ext;
 
         /* Perspective-correct texture column: interpolate tex/z, then multiply by z.
          * Scale 65536 matches tex_over_z so result is world-space texture coord (integer). */
@@ -829,7 +830,7 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
         int32_t depth_z = col_z;
         if (tex_id == SWITCHES_WALL_TEX_ID && col_z > 16) depth_z = col_z - 16;
 
-        draw_wall_column(screen_x, y_top, y_bot, tex_col, texture,
+        draw_wall_column(screen_x, y_top_draw, y_bot, y_top, tex_col, texture,
                          amiga_d6, valand, valshift, totalyoff, depth_z,
                          wall_height_for_tex);
     }
@@ -939,20 +940,12 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
     uint32_t *row32 = rgb + y * RENDER_WIDTH;
     int16_t *depth = rs->depth_buffer + y * RENDER_WIDTH;
     
-    /* Use actual distance for depth so floor/ceiling correctly occlude walls when
-     * closer. Ceiling: slight bias (dist - 1) at boundary to avoid z-fighting. */
-    int16_t floor_z;
-    if (floor_height < 0) {
-        int32_t ceiling_z = dist - 1;  /* bias so ceiling wins where wall meets ceiling */
-        if (ceiling_z < 1) ceiling_z = 1;
-        if (ceiling_z > 32767) ceiling_z = 32767;
-        floor_z = (int16_t)ceiling_z;
-    } else {
-        int32_t d = dist;
-        if (d < 1) d = 1;
-        if (d > 32767) d = 32767;
-        floor_z = (int16_t)d;
-    }
+    /* Use actual distance for depth so floor/ceiling correctly occlude walls when closer.
+     * Slight bias (dist - 1) so floor/ceiling win at wall boundary (step top, ceiling join). */
+    int32_t d = dist - 1;
+    if (d < 1) d = 1;
+    if (d > 32767) d = 32767;
+    int16_t floor_z = (int16_t)d;
 
     for (int x = xl; x <= xr; x++) {
         /* Per-pixel depth test: draw only if strictly closer (so bias is consistent) */
@@ -2141,7 +2134,8 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                     if (row >= y_min_clamp && row <= y_max_clamp) {
                         int lo = sx1 < sx2 ? sx1 : sx2;
                         int hi = sx1 > sx2 ? sx1 : sx2;
-                        int he_extra = full_screen_zone ? ((floor_y_dist < 0) ? CEILING_EDGE_EXTRA : FLOOR_EDGE_EXTRA) : edge_extra_portal;
+                        /* Floor: no edge extension (steps look bad). Ceiling: extend to close wall join. */
+                        int he_extra = (floor_y_dist < 0) ? (full_screen_zone ? CEILING_EDGE_EXTRA : edge_extra_portal) : 0;
                         lo -= he_extra;
                         hi += he_extra;
                         if (lo < r->left_clip) lo = r->left_clip;
@@ -2173,7 +2167,8 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                     x_fp += dx_fp * (row_start - sy2_raw);
                 }
                 
-                int edge_extra = full_screen_zone ? ((floor_y_dist < 0) ? CEILING_EDGE_EXTRA : FLOOR_EDGE_EXTRA) : edge_extra_portal;
+                /* Floor: no edge extension (steps look bad). Ceiling: extend to close wall join. */
+                int edge_extra = (floor_y_dist < 0) ? (full_screen_zone ? CEILING_EDGE_EXTRA : edge_extra_portal) : 0;
                 for (int row = row_start; row <= row_end; row++) {
                     if (row < 0 || row >= RENDER_HEIGHT) { x_fp += dx_fp; continue; }
                     int x = (int)(x_fp >> 16);
@@ -2196,6 +2191,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
             if (poly_bot > y_max_clamp) poly_bot = y_max_clamp;
             if (poly_bot >= RENDER_HEIGHT) poly_bot = RENDER_HEIGHT - 1;
             if (poly_bot < 0) poly_bot = -1;
+
 
             /* Resolve floor texture: floortile + whichtile offset.
              * ASM: move.l floortile,a0 / adda.w whichtile,a0 */
