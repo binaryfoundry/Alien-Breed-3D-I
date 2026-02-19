@@ -19,10 +19,9 @@ static SDL_Window   *g_window   = NULL;
 static SDL_Renderer *g_sdl_ren  = NULL;
 static SDL_Texture  *g_texture  = NULL;
 
-/* Scale factor for the window. Halve when RENDER_SCALE doubles so window size stays the same. */
-#define WINDOW_SCALE  2
-#define WINDOW_H      (RENDER_HEIGHT * WINDOW_SCALE)
-#define WINDOW_W      (WINDOW_H * 4 / 3)   /* 4:3 aspect ratio */
+/* Window size = framebuffer size for 1:1 pixels (no scaling). */
+#define WINDOW_W  RENDER_WIDTH
+#define WINDOW_H  RENDER_HEIGHT
 
 /* Legacy palette no longer needed - colors come from the .wad LUT data
  * and are written directly to the rgb_buffer as ARGB8888 pixels. */
