@@ -52,10 +52,6 @@
 #define WORLD_Y_FRAC_BITS  8
 #define WORLD_Y_SUBUNITS   (1 << WORLD_Y_FRAC_BITS)
 
-/* Sprite feet lift: logical pixels (at Amiga scale 1), scaled by RENDER_SCALE for resolution. */
-#define SPRITE_FEET_LIFT_LOGICAL  1
-#define SPRITE_FEET_LIFT_PIXELS   (SPRITE_FEET_LIFT_LOGICAL * RENDER_SCALE)
-
 /* Sprite size: (world * SPRITE_SIZE_SCALE / z) * SPRITE_SIZE_MULTIPLIER. Resolution via RENDER_SCALE.
  * 128 so sprites keep scaling when very close. Multiplier doubles apparent size; set to 1 to disable. */
 #define SPRITE_SIZE_SCALE      (128 * RENDER_SCALE)

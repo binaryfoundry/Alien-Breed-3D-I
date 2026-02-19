@@ -65,17 +65,17 @@ static const struct { int w; int h; } sprite_world_size_by_vect[MAX_SPRITE_TYPES
  * 0 = feet at bottom of image (default). If the art has empty space below the feet,
  * set this so we place that row on the floor. Y position itself comes from obj[4]/obj[7]. */
 static const int sprite_feet_rows_from_bottom_by_vect[MAX_SPRITE_TYPES] = {
-    /*  0 alien       */ 0,
-    /*  1 pickups     */ 4,   /* medikit, ammo etc – slight hover fix */
+    /*  0 alien       */ -10,
+    /*  1 pickups     */ 0,   /* medikit, ammo etc – slight hover fix */
     /*  2 bigbullet   */ 0,
     /*  3 (unused)    */ 0,
     /*  4 flying      */ 0,
     /*  5 keys        */ 0,
-    /*  6 rockets     */ 4,   /* ammo pickup – slight hover fix */
-    /*  7 barrel      */ 4,   /* barrel: obj[7] signed (-60) handles vertical placement */
+    /*  6 rockets     */ 0,   /* ammo pickup – slight hover fix */
+    /*  7 barrel      */ 2,   /* barrel: obj[7] signed (-60) handles vertical placement */
     /*  8 explosion   */ 0,
     /*  9 guns        */ 0,
-    /* 10 marine      */ 0,
+    /* 10 marine      */ -12,
     /* 11 bigalien    */ 0,
     /* 12 lamps       */ 0,
     /* 13 worm        */ 0,
@@ -1759,9 +1759,9 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         int half_h = sprite_h / 2;
         /* Per-vect feet anchor: shift sprite down so the feet row (not image bottom) sits on the floor. */
         int feet_rows = sprite_feet_rows_from_bottom_by_vect[v];
-        int feet_offset_px = (src_rows > 0 && feet_rows > 0)
+        int feet_offset_px = (src_rows > 0 && feet_rows != 0)
             ? (feet_rows * sprite_h / src_rows) : 0;
-        int scr_y = floor_screen_y - half_h - SPRITE_FEET_LIFT_PIXELS + feet_offset_px;
+        int scr_y = floor_screen_y - half_h + feet_offset_px;
 
         /* Look up frame info from FRAMES table */
         uint32_t ptr_off = 0;
