@@ -46,7 +46,15 @@
  *     256*11/8  = 352, corrects for Amiga 11:8 PAL pixel aspect in 4:3 window
  *     Other values work too -- nothing else is hardcoded to 256 for Y. */
 #define PROJ_X_SCALE     256
-#define PROJ_Y_SCALE     (256 * 11 / 20)   /* change this to taste */
+#define PROJ_Y_SCALE     (256 * 11 / 20)   /* aspect ratio: vertical FOV vs horizontal; change to taste */
+
+/* World Y fixed-point: zone/floor/object heights use this many fractional bits for projection. */
+#define WORLD_Y_FRAC_BITS  8
+#define WORLD_Y_SUBUNITS   (1 << WORLD_Y_FRAC_BITS)
+
+/* Sprite feet lift: logical pixels (at Amiga scale 1), scaled by RENDER_SCALE for resolution. */
+#define SPRITE_FEET_LIFT_LOGICAL  1
+#define SPRITE_FEET_LIFT_PIXELS   (SPRITE_FEET_LIFT_LOGICAL * RENDER_SCALE)
 
 /* Sprite size: (world * SPRITE_SIZE_SCALE / z) * SPRITE_SIZE_MULTIPLIER. Resolution via RENDER_SCALE.
  * 128 so sprites keep scaling when very close. Multiplier doubles apparent size; set to 1 to disable. */

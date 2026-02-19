@@ -63,7 +63,7 @@ static const struct { int w; int h; } sprite_world_size_by_vect[MAX_SPRITE_TYPES
 
 /* Per-sprite "feet" anchor: source rows from bottom of graphic to the feet row.
  * 0 = feet at bottom of image (default). If the art has empty space below the feet,
- * set this so we place the sprite with that row on the floor (e.g. barrel ~8). */
+ * set this so we place that row on the floor. Y position itself comes from obj[4]/obj[7]. */
 static const int sprite_feet_rows_from_bottom_by_vect[MAX_SPRITE_TYPES] = {
     /*  0 alien       */ 0,
     /*  1 pickups     */ 4,   /* medikit, ammo etc – slight hover fix */
@@ -72,7 +72,7 @@ static const int sprite_feet_rows_from_bottom_by_vect[MAX_SPRITE_TYPES] = {
     /*  4 flying      */ 0,
     /*  5 keys        */ 0,
     /*  6 rockets     */ 4,   /* ammo pickup – slight hover fix */
-    /*  7 barrel      */ 4,
+    /*  7 barrel      */ 4,   /* barrel: obj[7] signed (-60) handles vertical placement */
     /*  8 explosion   */ 0,
     /*  9 guns        */ 0,
     /* 10 marine      */ 0,
@@ -658,6 +658,8 @@ static void draw_wall_column(int x, int y_top, int y_bot,
  * compiler already arranges them correctly).
  * ----------------------------------------------------------------------- */
 #define MAX_DEFERRED_WALLS 256
+/* Reference Z used to project two-level zone split height to screen Y (same scale as orp->z). */
+#define TWO_LEVEL_SPLIT_REF_Z 400
 typedef struct {
     int16_t  x1, z1, x2, z2;
     int16_t  top, bot;
@@ -887,7 +889,7 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
     /* Zone brightness: level 0..15 *2; animated -10..10 *2. */
     int zone_d6 = brightness * 2;
 
-    int32_t fh_8 = floor_height >> 8;
+    int32_t fh_8 = floor_height >> WORLD_Y_FRAC_BITS;
     int32_t dist;
     if (abs_row_dist <= 3) {
         dist = 32000;
@@ -1173,9 +1175,10 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
     int gray = (bright_idx * 255) / 62;
     if (gray < 90) gray = 90;  /* floor so no-palette / fallback path stays visible */
 
-    /* Sprite depth: bias in front so sprites on walls win z-fighting. */
+    /* Use true depth so the billboard sits at the object's real 3D position (no shift
+     * towards camera). Slight bias -1 so sprite is just in front of floor at same Z. */
     int16_t sprite_z = (z > 32767) ? 32767 : (int16_t)z;
-    int16_t sprite_z_bias = (sprite_z > 16) ? (sprite_z - 16) : 1;
+    int16_t sprite_z_bias = (sprite_z > 1) ? (sprite_z - 1) : 1;
 
     /* Draw column-by-column (matching Amiga's column-strip approach).
      *
@@ -1652,8 +1655,8 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         if (z_for_size < 1) z_for_size = 1;
 
         /* Project Y boundaries from room top/bottom (same PROJ_Y_SCALE as walls). */
-        int32_t clip_top_y = (int)((int64_t)((top_of_room - y_off) >> 8) * PROJ_Y_SCALE * RENDER_SCALE / orp->z) + (RENDER_HEIGHT / 2);
-        int32_t clip_bot_y = (int)((int64_t)((bot_of_room - y_off) >> 8) * PROJ_Y_SCALE * RENDER_SCALE / orp->z) + (RENDER_HEIGHT / 2);
+        int32_t clip_top_y = (int)((int64_t)((top_of_room - y_off) >> WORLD_Y_FRAC_BITS) * PROJ_Y_SCALE * RENDER_SCALE / orp->z) + (RENDER_HEIGHT / 2);
+        int32_t clip_bot_y = (int)((int64_t)((bot_of_room - y_off) >> WORLD_Y_FRAC_BITS) * PROJ_Y_SCALE * RENDER_SCALE / orp->z) + (RENDER_HEIGHT / 2);
         if (clip_top_y >= clip_bot_y) continue;
 
         /* Project to screen X (PROJ_X_SCALE/2 = horizontal focal length). */
@@ -1731,13 +1734,34 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         if (src_cols < 1) src_cols = 32;
         if (src_rows < 1) src_rows = 32;
 
-        /* Sprite Y: place feet on zone floor. Use per-vect feet anchor (rows from bottom of graphic). */
-        int32_t floor_rel = (int32_t)(bot_of_room - y_off);
-        int floor_screen_y = (int)((int64_t)(floor_rel >> 8) * PROJ_Y_SCALE * (int32_t)RENDER_SCALE / orp->z) + (RENDER_HEIGHT / 2);
+        /* Sprite Y: use the object's own floor height from obj[4] and obj[7].
+         * Formula (from objects.c): obj[4] = (floor_h >> 7) - world_h,
+         *   world_h = obj[7] (signed). => obj_floor = (obj[4] + world_h) << 7.
+         * Barrels: obj[7] is -60 and level data often leaves obj[4] wrong, so use zone floor.
+         * When obj[4] is 0 (uninitialised) use bot_of_room. */
+        int16_t obj_y4 = rd16(obj + 4);
+        int32_t obj_floor;
+        if (obj_number == OBJ_NBR_BARREL) {
+            obj_floor = bot_of_room;
+        } else if (obj_y4 != 0) {
+            int world_h_raw = (int)(int8_t)obj[7];
+            obj_floor = ((int32_t)obj_y4 + (int32_t)world_h_raw) << 7;
+        } else {
+            obj_floor = bot_of_room;
+        }
+        int32_t floor_rel = obj_floor - y_off;
+        /* Match floor polygon/span: screen_y = center + (rel * PROJ_Y_SCALE * RENDER_SCALE) / (z * WORLD_Y_SUBUNITS).
+         * PROJ_Y_SCALE = aspect; RENDER_SCALE = resolution; WORLD_Y_SUBUNITS = world Y fixed-point. No hardcoded constants. */
+        int64_t denom = (int64_t)orp->z * (int64_t)WORLD_Y_SUBUNITS;
+        if (denom < 1) denom = 1;
+        int center_y = RENDER_HEIGHT / 2;
+        int floor_screen_y = (int)((int64_t)floor_rel * (int64_t)PROJ_Y_SCALE * (int32_t)RENDER_SCALE / denom) + center_y;
         int half_h = sprite_h / 2;
-        int feet_rows = sprite_feet_rows_from_bottom_by_vect[vect_num];
-        int feet_screen = (feet_rows > 0 && src_rows > 0) ? (feet_rows * sprite_h) / src_rows : 0;
-        int scr_y = floor_screen_y - half_h + feet_screen;
+        /* Per-vect feet anchor: shift sprite down so the feet row (not image bottom) sits on the floor. */
+        int feet_rows = sprite_feet_rows_from_bottom_by_vect[v];
+        int feet_offset_px = (src_rows > 0 && feet_rows > 0)
+            ? (feet_rows * sprite_h / src_rows) : 0;
+        int scr_y = floor_screen_y - half_h - SPRITE_FEET_LIFT_PIXELS + feet_offset_px;
 
         /* Look up frame info from FRAMES table */
         uint32_t ptr_off = 0;
@@ -1842,9 +1866,18 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
     int32_t zone_off = rd32(level->zone_adds + zone_id * 4);
     const uint8_t *zone_data = level->data + zone_off;
 
-    /* Zone heights */
-    int32_t zone_floor = rd32(zone_data + 2);   /* ToZoneFloor */
-    int32_t zone_roof  = rd32(zone_data + 6);   /* ToZoneRoof */
+    /* Zone heights: upper room uses its own floor/roof stored at offsets +10/+14. */
+    int32_t zone_floor, zone_roof;
+    if (use_upper) {
+        int32_t uf = rd32(zone_data + 10);  /* ZD_UPPER_FLOOR */
+        int32_t ur = rd32(zone_data + 14);  /* ZD_UPPER_ROOF  */
+        /* Fallback: if upper floor/roof not set, use lower values */
+        zone_floor = (uf != 0) ? uf : rd32(zone_data + 2);
+        zone_roof  = (ur != 0) ? ur : rd32(zone_data + 6);
+    } else {
+        zone_floor = rd32(zone_data + 2);   /* ZD_FLOOR (ToZoneFloor) */
+        zone_roof  = rd32(zone_data + 6);   /* ZD_ROOF  (ToZoneRoof)  */
+    }
 
     /* Get zone graphics data (the polygon list for this zone).
      * zone_graph_adds: 8 bytes per zone = lower gfx offset (long) + upper gfx offset (long). */
@@ -2122,7 +2155,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                         : (int)((int64_t)ex2 * RENDER_SCALE / ez2) + RENDER_WIDTH / 2;
 
                 /* Project Y: same rule so X and Y stay consistent (no jump when z crosses FLOOR_NEAR). */
-                int32_t rel_h_8 = rel_h >> 8;
+                int32_t rel_h_8 = rel_h >> WORLD_Y_FRAC_BITS;
                 int sy1_raw = (int)((int64_t)rel_h_8 * PROJ_Y_SCALE * RENDER_SCALE / (int32_t)ez1) + center;
                 int sy2_raw = (int)((int64_t)rel_h_8 * PROJ_Y_SCALE * RENDER_SCALE / (int32_t)ez2) + center;
 
@@ -2228,7 +2261,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                         int row_dist = row - half_h;
                         int abs_rd = (row_dist >= 0) ? row_dist : -row_dist;
                         if (abs_rd <= 3) abs_rd = 4;
-                        int32_t dist = (int32_t)((int64_t)(rel_h >> 8) * PROJ_Y_SCALE * RENDER_SCALE / abs_rd);
+                        int32_t dist = (int32_t)((int64_t)(rel_h >> WORLD_Y_FRAC_BITS) * PROJ_Y_SCALE * RENDER_SCALE / abs_rd);
                         if (dist < 1) dist = 1;
                         if (dist > 32767) dist = 32767;
                         int32_t span_depth = (floor_y_dist < 0) ? dist - 1 : dist;
@@ -2605,8 +2638,8 @@ void renderer_draw_display(GameState *state)
                 const uint8_t *zd = state->level.data + zone_off;
                 int32_t zone_roof = rd32(zd + 6);  /* ToZoneRoof = split height */
                 int32_t rel = zone_roof - r->yoff;
-                /* Split screen Y where lower ceiling / upper floor projects (ref z ~400). */
-                int split_y = (int)((int64_t)(rel >> 8) * PROJ_Y_SCALE * RENDER_SCALE / 400) + (RENDER_HEIGHT / 2);
+                /* Split screen Y where lower ceiling / upper floor projects (same projection formula, fixed ref Z). */
+                int split_y = (int)((int64_t)(rel >> WORLD_Y_FRAC_BITS) * PROJ_Y_SCALE * RENDER_SCALE / TWO_LEVEL_SPLIT_REF_Z) + (RENDER_HEIGHT / 2);
                 if (split_y < 1) split_y = 1;
                 if (split_y >= RENDER_HEIGHT) split_y = RENDER_HEIGHT - 1;
                 /* Reserve a band above the split for the lower room so the wall can extend up to

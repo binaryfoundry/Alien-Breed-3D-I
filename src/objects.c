@@ -357,16 +357,37 @@ void objects_update(GameState *state)
          * The offset is per-type; barrel uses -60 (= its world_h).
          * Generic formula: obj[4] = (floor >> 7) - world_h, so that
          *   scr_y + half_h ≈ floor_screen_y  (sprite bottom sits on floor).
-         * Proof: (obj[4]<<7 + world_h*128) = floor, matching the floor projection. */
+         * Proof: (obj[4]<<7 + world_h*128) = floor, matching the floor projection.
+         *
+         * For two-level zones, pick upper floor (ZD_UPPER_FLOOR at +10) when the
+         * object's world Y (ObjectPoints[pt_num*8+2]) is at or above the split. */
         {
             int16_t obj_zone = OBJ_ZONE(obj);
             if (obj_zone >= 0 && state->level.zone_adds && state->level.data) {
                 int32_t zo = be32(state->level.zone_adds + obj_zone * 4);
                 if (zo > 0) {
                     const uint8_t *zd = state->level.data + zo;
-                    int32_t floor_h = be32(zd + 2);  /* ToZoneFloor */
-                    int world_h = (int)(uint8_t)obj->raw[7];
-                    if (world_h < 1) world_h = 32;
+                    int32_t floor_h = be32(zd + 2);  /* default: ToZoneFloor (lower) */
+
+                    /* Two-level zone: if upper floor is set, check which level the
+                     * object is on via its world Y stored in ObjectPoints[pt_num*8+2]. */
+                    int32_t upper_floor = be32(zd + 10);  /* ZD_UPPER_FLOOR */
+                    if (upper_floor != 0 && state->level.object_points) {
+                        int16_t pt_num = OBJ_CID(obj);
+                        if (pt_num >= 0 && pt_num < state->level.num_object_points) {
+                            int16_t obj_world_y = be16(state->level.object_points + pt_num * 8 + 2);
+                            int32_t split_h = be32(zd + 6);  /* ZD_ROOF = split/boundary */
+                            /* Amiga Y: more negative = higher.
+                             * Object is on upper floor when its Y <= split>>7. */
+                            if ((int32_t)obj_world_y * 128 <= split_h) {
+                                floor_h = upper_floor;
+                            }
+                        }
+                    }
+
+                    /* world_height at [7] is signed (e.g. barrel -60); only default when 0 */
+                    int world_h = (int)(int8_t)obj->raw[7];
+                    if (world_h == 0) world_h = 32;
                     int16_t render_y = (int16_t)((floor_h >> 7) - world_h);
                     obj_sw(obj->raw + 4, render_y);
                 }
