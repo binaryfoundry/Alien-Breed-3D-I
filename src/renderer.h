@@ -87,13 +87,15 @@ typedef struct {
 /* -----------------------------------------------------------------------
  * Per-column clipping table
  *
- * PolyTopTab / PolyBotTab: per-column top/bottom of drawn walls.
- * Used to clip sprites and floors against wall edges.
+ * top/bot: vertical span of drawn wall in that column.
+ * z: depth of that wall (view-space Z). When drawing sprites we only skip
+ *    pixels in [top,bot] if sprite Z >= clip.z (sprite behind wall).
  * Allocated with width elements (renderer width).
  * ----------------------------------------------------------------------- */
 typedef struct {
     int16_t *top;
     int16_t *bot;
+    int32_t *z;   /* depth of wall in column; 0 = no wall */
 } ColumnClip;
 
 /* -----------------------------------------------------------------------

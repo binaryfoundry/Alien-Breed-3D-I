@@ -209,6 +209,8 @@ static void free_buffers(void)
     g_renderer.clip.top = NULL;
     free(g_renderer.clip.bot);
     g_renderer.clip.bot = NULL;
+    free(g_renderer.clip.z);
+    g_renderer.clip.z = NULL;
 }
 
 static void allocate_buffers(int w, int h)
@@ -229,6 +231,7 @@ static void allocate_buffers(int w, int h)
     size_t clip_size = (size_t)w * sizeof(int16_t);
     g_renderer.clip.top = (int16_t*)calloc(1, clip_size);
     g_renderer.clip.bot = (int16_t*)calloc(1, clip_size);
+    g_renderer.clip.z = (int32_t*)calloc(1, (size_t)w * sizeof(int32_t));
 
     g_renderer.top_clip = 0;
     g_renderer.bot_clip = (int16_t)(h - 1);
@@ -670,12 +673,16 @@ static void draw_wall_column(int x, int y_top, int y_bot,
         tex_y += tex_step;
     }
 
-    /* Update column clip (walls occlude floor/ceiling/sprites behind) */
+    /* Update column clip (walls occlude floor/ceiling/sprites behind).
+     * Store wall depth so sprites only skip when actually behind the wall (sprite_z >= clip.z). */
     if (y_top > g_renderer.clip.top[x]) {
         g_renderer.clip.top[x] = (int16_t)y_top;
     }
     if (y_bot < g_renderer.clip.bot[x]) {
         g_renderer.clip.bot[x] = (int16_t)y_bot;
+    }
+    if (g_renderer.clip.z) {
+        g_renderer.clip.z[x] = col_z;
     }
 }
 /* -----------------------------------------------------------------------
@@ -1207,6 +1214,7 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
             int screen_row = sy + dy;
             if (screen_row < 0 || screen_row >= rh) continue;
 
+            /* Billboards are drawn last in the zone (after all walls), so we draw on top with no clip test. */
             /* Map screen row to source row 0..eff_rows-1 */
             int src_row = (height > 1) ? (dy * eff_rows) / height : 0;
             if (src_row >= eff_rows) src_row = eff_rows - 1;
@@ -2496,7 +2504,20 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
         }
     }
 
-    /* Draw walls and arcs in stream order (no sort; painter's by stream order). */
+    /* Sort deferred walls by midpoint depth (z1+z2) descending so we draw far walls first.
+     * Then the last wall drawn in each column is the frontmost, so clip.z is correct for sprites. */
+    for (int i = 1; i < num_deferred; i++) {
+        DeferredWall w = deferred[i];
+        int32_t w_depth = (int32_t)w.z1 + (int32_t)w.z2;
+        int j = i - 1;
+        while (j >= 0 && (int32_t)deferred[j].z1 + (int32_t)deferred[j].z2 < w_depth) {
+            deferred[j + 1] = deferred[j];
+            j--;
+        }
+        deferred[j + 1] = w;
+    }
+
+    /* Draw walls and arcs back-to-front (far first). */
     for (int i = 0; i < num_deferred; i++) {
         DeferredWall *dw = &deferred[i];
         if (dw->tex_id >= 0 && dw->tex_id < MAX_WALL_TILES) {
@@ -2512,7 +2533,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                           dw->wall_height_for_tex);
     }
 
-    /* Draw this zone's sprites after all floor and walls so they appear in front. */
+    /* Draw billboards last in the zone: after all floors, roofs, and walls. They are drawn on top. */
     {
         int is_multi_floor = (rd32(level->zone_graph_adds + zone_id * 8 + 4) != 0);
         draw_zone_objects(state, zone_id, zone_roof, zone_floor, is_multi_floor ? use_upper : -1);
@@ -2574,12 +2595,13 @@ void renderer_draw_display(GameState *state)
     /* xwobble from head bob */
     r->xwobble = 0; /* Would be set from plr->bob_frame */
 
-    /* 3. Initialize column clipping (per-column top/bot for floor and sprite clipping) */
+    /* 3. Initialize column clipping (per-column top/bot/z for floor and sprite clipping) */
     {
         memset(r->clip.top, 0, (size_t)w * sizeof(int16_t));
         int16_t bot_val = (int16_t)(h - 1);
         int16_t *bot = r->clip.bot;
         for (int i = 0; i < w; i++) bot[i] = bot_val;
+        if (r->clip.z) memset(r->clip.z, 0, (size_t)w * sizeof(int32_t));
     }
 
     /* 4. Rotate geometry */
@@ -2710,6 +2732,7 @@ void renderer_draw_display(GameState *state)
                     memset(r->clip.top, 0, (size_t)w * sizeof(int16_t));
                     int16_t bot_val = (int16_t)(g_renderer.height - 1);
                     for (int c = 0; c < w; c++) r->clip.bot[c] = bot_val;
+                    if (r->clip.z) memset(r->clip.z, 0, (size_t)w * sizeof(int32_t));
                 }
                 r->top_clip = (int16_t)lower_top;
                 r->bot_clip = (int16_t)(g_renderer.height - 1);
