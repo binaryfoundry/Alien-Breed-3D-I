@@ -1,5 +1,4 @@
 
 *.o
 build
-data
-game
+/data/
