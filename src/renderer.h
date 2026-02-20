@@ -25,12 +25,16 @@
  * -----------------------------------------------------------------------*/
 #define RENDER_SCALE     8     /* Resolution multiplier (1 = Amiga); halve stub_display WINDOW_SCALE when doubling so window size unchanged */
 #define RENDER_SCALE_LOG2 3    /* log2(RENDER_SCALE); keep in sync when changing RENDER_SCALE (1->0, 2->1, 4->2, 8->3) */
-#define RENDER_WIDTH     (96  * RENDER_SCALE)   /* Visible game columns */
-#define RENDER_HEIGHT    (80  * RENDER_SCALE)   /* Visible game lines   */
+#define RENDER_WIDTH         (96  * RENDER_SCALE)   /* Visible game columns */
+#define RENDER_HEIGHT        (80  * RENDER_SCALE)   /* Visible game lines   */
+#define RENDER_DEFAULT_WIDTH  RENDER_WIDTH          /* Default/resize reference width  */
+#define RENDER_DEFAULT_HEIGHT RENDER_HEIGHT         /* Default/resize reference height */
 
 /* Wall vertical texture: divisor so one world-space wall height maps to one texture repeat at any resolution. */
 #define WALL_VERTICAL_TEX_DIVISOR  ((int32_t)PROJ_Y_SCALE * (int32_t)RENDER_SCALE)
 #define RENDER_STRIDE    RENDER_WIDTH            /* Bytes per line (1 byte per pixel tag) */
+#define RENDER_BUF_SIZE  (RENDER_STRIDE * RENDER_HEIGHT)
+#define RENDER_STRIDE    RENDER_WIDTH   /* stride = width; runtime uses renderer width */
 #define RENDER_BUF_SIZE  (RENDER_STRIDE * RENDER_HEIGHT)
 
 /* Projection scales.
@@ -87,10 +91,11 @@ typedef struct {
  *
  * PolyTopTab / PolyBotTab: per-column top/bottom of drawn walls.
  * Used to clip sprites and floors against wall edges.
+ * Allocated with width elements (renderer width).
  * ----------------------------------------------------------------------- */
 typedef struct {
-    int16_t top[RENDER_WIDTH];
-    int16_t bot[RENDER_WIDTH];
+    int16_t *top;
+    int16_t *bot;
 } ColumnClip;
 
 /* -----------------------------------------------------------------------
@@ -117,13 +122,16 @@ typedef struct {
  * Renderer state
  * ----------------------------------------------------------------------- */
 typedef struct {
+    /* Current framebuffer size (matches window when resizable) */
+    int width;
+    int height;
+
     /* Framebuffer (double-buffered) */
-    uint8_t *buffer;          /* Current render target (RENDER_BUF_SIZE bytes) */
+    uint8_t *buffer;          /* Current render target (width * height bytes) */
     uint8_t *back_buffer;     /* Back buffer for swap */
 
     /* 32-bit ARGB framebuffer (double-buffered).
-     * This holds the final rendered pixels with actual game colors.
-     * Size: RENDER_WIDTH * RENDER_HEIGHT * sizeof(uint32_t). */
+     * Size: width * height * sizeof(uint32_t). */
     uint32_t *rgb_buffer;
     uint32_t *rgb_back_buffer;
 
@@ -226,6 +234,9 @@ void renderer_init(void);
 
 /* Shutdown renderer (free buffers) */
 void renderer_shutdown(void);
+
+/* Resize framebuffer (call on window resize) */
+void renderer_resize(int w, int h);
 
 /* Clear the framebuffer to a color */
 void renderer_clear(uint8_t color);

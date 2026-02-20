@@ -25,6 +25,7 @@
 void display_init(void);
 void display_shutdown(void);
 int display_is_fullscreen(void);  /* non-zero if window is fullscreen */
+void display_on_resize(int w, int h);  /* call on window resize to resize framebuffer */
 
 /* Screen management */
 void display_alloc_text_screen(void);

@@ -177,6 +177,12 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
                 if (SDL_GetRelativeMouseMode() && key_map) key_map[AMIGA_KEY_SPACE] = 0;
             }
             break;
+
+        case SDL_WINDOWEVENT:
+            if (ev.window.event == SDL_WINDOWEVENT_RESIZED) {
+                display_on_resize(ev.window.data1, ev.window.data2);
+            }
+            break;
         }
     }
 }

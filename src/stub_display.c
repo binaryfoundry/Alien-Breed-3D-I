@@ -38,11 +38,15 @@ void display_init(void)
         return;
     }
 
+    renderer_init();
+    int init_w = renderer_get_width();
+    int init_h = renderer_get_height();
+
     g_window = SDL_CreateWindow(
         "Alien Breed 3D I",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        WINDOW_W, WINDOW_H,
-        SDL_WINDOW_SHOWN
+        init_w, init_h,
+        SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
     );
     if (!g_window) {
         printf("[DISPLAY] SDL_CreateWindow failed: %s\n", SDL_GetError());
@@ -56,21 +60,27 @@ void display_init(void)
         return;
     }
 
-    /* Texture to upload the chunky buffer into */
     g_texture = SDL_CreateTexture(g_sdl_ren,
         SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
-        RENDER_WIDTH, RENDER_HEIGHT);
+        init_w, init_h);
     if (!g_texture) {
         printf("[DISPLAY] SDL_CreateTexture failed: %s\n", SDL_GetError());
         return;
     }
-
     SDL_SetTextureScaleMode(g_texture, SDL_ScaleModeNearest);
 
-    renderer_init();
+    printf("[DISPLAY] SDL2 ready: %dx%d window (resizable)\n", init_w, init_h);
+}
 
-    printf("[DISPLAY] SDL2 ready: %dx%d window (game: %dx%d)\n",
-           WINDOW_W, WINDOW_H, RENDER_WIDTH, RENDER_HEIGHT);
+void display_on_resize(int w, int h)
+{
+    if (w < 1 || h < 1) return;
+    renderer_resize(w, h);
+    if (g_texture) SDL_DestroyTexture(g_texture);
+    g_texture = SDL_CreateTexture(g_sdl_ren,
+        SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
+        renderer_get_width(), renderer_get_height());
+    if (g_texture) SDL_SetTextureScaleMode(g_texture, SDL_ScaleModeNearest);
 }
 
 int display_is_fullscreen(void)
@@ -129,10 +139,11 @@ void display_draw_display(GameState *state)
     int pitch;
     if (SDL_LockTexture(g_texture, NULL, (void**)&pixels, &pitch) < 0) return;
 
-    for (int y = 0; y < RENDER_HEIGHT; y++) {
-        const uint32_t *src_row = src + y * RENDER_WIDTH;
+    int w = renderer_get_width(), h = renderer_get_height();
+    for (int y = 0; y < h; y++) {
+        const uint32_t *src_row = src + y * w;
         uint32_t *dst_row = (uint32_t*)((uint8_t*)pixels + y * pitch);
-        memcpy(dst_row, src_row, RENDER_WIDTH * sizeof(uint32_t));
+        memcpy(dst_row, src_row, (size_t)w * sizeof(uint32_t));
     }
 
     SDL_UnlockTexture(g_texture);
@@ -170,11 +181,12 @@ void display_energy_bar(int16_t energy)
 {
     uint32_t *rgb = g_renderer.rgb_buffer;
     if (!rgb) return;
-    int bar_y = RENDER_HEIGHT - 2;
-    int bar_w = (energy > 0) ? ((int)energy * (RENDER_WIDTH - 4) / 127) : 0;
-    for (int x = 2; x < 2 + bar_w && x < RENDER_WIDTH - 2; x++) {
-        rgb[bar_y * RENDER_WIDTH + x] = 0xFF00CC00;       /* bright green */
-        rgb[(bar_y - 1) * RENDER_WIDTH + x] = 0xFF00CC00;
+    int w = g_renderer.width, h = g_renderer.height;
+    int bar_y = h - 2;
+    int bar_w = (energy > 0) ? ((int)energy * (w - 4) / 127) : 0;
+    for (int x = 2; x < 2 + bar_w && x < w - 2; x++) {
+        rgb[bar_y * w + x] = 0xFF00CC00;
+        rgb[(bar_y - 1) * w + x] = 0xFF00CC00;
     }
 }
 
@@ -182,13 +194,14 @@ void display_ammo_bar(int16_t ammo)
 {
     uint32_t *rgb = g_renderer.rgb_buffer;
     if (!rgb) return;
-    int bar_y = RENDER_HEIGHT - 5;
+    int w = g_renderer.width, h = g_renderer.height;
+    int bar_y = h - 5;
     int max_ammo = 999;
-    int bar_w = (ammo > 0) ? ((int)ammo * (RENDER_WIDTH - 4) / max_ammo) : 0;
-    if (bar_w > RENDER_WIDTH - 4) bar_w = RENDER_WIDTH - 4;
-    for (int x = 2; x < 2 + bar_w && x < RENDER_WIDTH - 2; x++) {
-        rgb[bar_y * RENDER_WIDTH + x] = 0xFFCCCC00;       /* bright yellow */
-        rgb[(bar_y - 1) * RENDER_WIDTH + x] = 0xFFCCCC00;
+    int bar_w = (ammo > 0) ? ((int)ammo * (w - 4) / max_ammo) : 0;
+    if (bar_w > w - 4) bar_w = w - 4;
+    for (int x = 2; x < 2 + bar_w && x < w - 2; x++) {
+        rgb[bar_y * w + x] = 0xFFCCCC00;
+        rgb[(bar_y - 1) * w + x] = 0xFFCCCC00;
     }
 }
 
