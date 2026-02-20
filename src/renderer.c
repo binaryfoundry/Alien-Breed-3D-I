@@ -224,8 +224,7 @@ static void allocate_buffers(int w, int h)
     g_renderer.rgb_buffer = (uint32_t*)calloc(1, rgb_size);
     g_renderer.rgb_back_buffer = (uint32_t*)calloc(1, rgb_size);
 
-    size_t depth_size = buf_size * sizeof(int16_t);
-    g_renderer.depth_buffer = (int16_t*)calloc(1, depth_size);
+    g_renderer.depth_buffer = NULL;  /* disabled: rely on painter's algorithm */
 
     size_t clip_size = (size_t)w * sizeof(int16_t);
     g_renderer.clip.top = (int16_t*)calloc(1, clip_size);
@@ -543,8 +542,7 @@ static void draw_wall_column(int x, int y_top, int y_bot,
 {
     uint8_t *buf = g_renderer.buffer;
     uint32_t *rgb = g_renderer.rgb_buffer;
-    int16_t *depth = g_renderer.depth_buffer;
-    if (!buf || !rgb || !depth) return;
+    if (!buf || !rgb) return;
     if (x < g_renderer.left_clip || x >= g_renderer.right_clip) return;
 
     int width = g_renderer.width;
@@ -610,8 +608,6 @@ static void draw_wall_column(int x, int y_top, int y_bot,
     int32_t yoff = (int32_t)((unsigned)totalyoff & (unsigned)valand);
     int32_t tex_y = (ct - y_top_tex) * tex_step + ((int32_t)yoff << 16);
 
-    int16_t col_z16 = (col_z > 32767) ? 32767 : (int16_t)col_z;
-
     /* Precompute distance shade once per column (Amiga-style: luminance ∝ (64-d6)/64, min 16). */
     int inv_d6 = 64 - amiga_d6;
     int shade = (256 * inv_d6) / 64;
@@ -619,15 +615,6 @@ static void draw_wall_column(int x, int y_top, int y_bot,
     if (shade < 16) shade = 16;
 
     for (int y = ct; y <= cb; y++) {
-        int pix_idx = y * width + x;
-
-        /* Per-pixel depth test: only draw if closer than existing pixel */
-        if (col_z16 >= depth[pix_idx]) {
-            tex_y += tex_step;
-            continue;
-        }
-        depth[pix_idx] = col_z16;
-
         /* Mask texture Y to wrap within texture height */
         int ty = (int)(tex_y >> 16) & valand;
         uint32_t argb;
@@ -679,7 +666,7 @@ static void draw_wall_column(int x, int y_top, int y_bot,
         }
 
         buf[y * width + x] = 2; /* tag: wall */
-        rgb[pix_idx] = argb;
+        rgb[y * width + x] = argb;
         tex_y += tex_step;
     }
 
@@ -894,7 +881,7 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
     RendererState *rs = &g_renderer;
     uint8_t *buf = rs->buffer;
     uint32_t *rgb = rs->rgb_buffer;
-    if (!buf || !rgb || !rs->depth_buffer) return;
+    if (!buf || !rgb) return;
     if (y < 0 || y >= rs->height) return;
 
     int xl = (x_left < rs->left_clip) ? rs->left_clip : x_left;
@@ -969,23 +956,8 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
 
     uint8_t *row8 = buf + (size_t)y * w;
     uint32_t *row32 = rgb + (size_t)y * w;
-    int16_t *depth = rs->depth_buffer + (size_t)y * w;
-    
-    /* Use actual distance for depth so floor/ceiling correctly occlude walls when closer.
-     * Slight bias (dist - 1) so floor/ceiling win at wall boundary (step top, ceiling join). */
-    int32_t d = dist - 1;
-    if (d < 1) d = 1;
-    if (d > 32767) d = 32767;
-    int16_t floor_z = (int16_t)d;
 
     for (int x = xl; x <= xr; x++) {
-        /* Per-pixel depth test: draw only if strictly closer (so bias is consistent) */
-        if (floor_z >= depth[x]) {
-            u_fp64 += u_step_64;
-            v_fp64 += v_step_64;
-            continue;
-        }
-
         /* Use low 32 bits of 64-bit accumulator for texture; (>>16)&63 gives 0..63 */
         int32_t u32 = (int32_t)(u_fp64 & 0xFFFFFFFFu);
         int32_t v32 = (int32_t)(v_fp64 & 0xFFFFFFFFu);
@@ -1126,7 +1098,6 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
             argb = 0xFF000000u | (r << 16) | (g << 8) | b;
         }
 
-        depth[x] = floor_z;
         row8[x] = 1;
         row32[x] = argb;
     }
@@ -1167,8 +1138,7 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
     (void)sprite_type;
     uint8_t *buf = g_renderer.buffer;
     uint32_t *rgb = g_renderer.rgb_buffer;
-    int16_t *depth_buf = g_renderer.depth_buffer;
-    if (!buf || !rgb || !depth_buf) return;
+    if (!buf || !rgb) return;
     if (z <= 0) return;
     if (!wad || !ptr_data) return;
     int rw = g_renderer.width, rh = g_renderer.height;
@@ -1192,11 +1162,6 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
     if (pal && pal_size < 960) pal_level_off = 0;  /* single-level or small palette */
     int gray = (bright_idx * 255) / 62;
     if (gray < 90) gray = 90;  /* floor so no-palette / fallback path stays visible */
-
-    /* Use true depth so the billboard sits at the object's real 3D position (no shift
-     * towards camera). Slight bias -1 so sprite is just in front of floor at same Z. */
-    int16_t sprite_z = (z > 32767) ? 32767 : (int16_t)z;
-    int16_t sprite_z_bias = (sprite_z > 1) ? (sprite_z - 1) : 1;
 
     /* Draw column-by-column (matching Amiga's column-strip approach).
      *
@@ -1245,9 +1210,6 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
             int screen_row = sy + dy;
             if (screen_row < 0 || screen_row >= rh) continue;
 
-            if (sprite_z_bias >= depth_buf[screen_row * rw + screen_col])
-                continue;
-
             /* Map screen row to source row 0..eff_rows-1 */
             int src_row = (height > 1) ? (dy * eff_rows) / height : 0;
             if (src_row >= eff_rows) src_row = eff_rows - 1;
@@ -1268,11 +1230,9 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
             }
             if (texel == 0) continue;  /* transparent */
 
-            uint8_t *row8 = buf + screen_row * g_renderer.width;
-            uint32_t *row32 = rgb + screen_row * g_renderer.width;
-            int16_t *depth_row = depth_buf + screen_row * g_renderer.width;
+            uint8_t *row8 = buf + (size_t)screen_row * rw;
+            uint32_t *row32 = rgb + (size_t)screen_row * rw;
 
-            depth_row[screen_col] = sprite_z_bias;
             row8[screen_col] = texel;
 
             /* Color from .pal brightness palette (15 levels × 64 bytes or single 64-byte block).
@@ -2612,18 +2572,10 @@ void renderer_draw_display(GameState *state)
 
     /* 3. Initialize column clipping and depth buffer */
     {
-        int w = r->width, h = r->height;
         memset(r->clip.top, 0, (size_t)w * sizeof(int16_t));
         int16_t bot_val = (int16_t)(h - 1);
         int16_t *bot = r->clip.bot;
         for (int i = 0; i < w; i++) bot[i] = bot_val;
-        /* Clear depth buffer to far (large Z = far away) */
-        if (r->depth_buffer) {
-            const int16_t far_z = 32767;
-            int16_t *d = r->depth_buffer;
-            size_t n = (size_t)w * (size_t)h;
-            for (size_t i = 0; i < n; i++) d[i] = far_z;
-        }
     }
 
     /* 4. Rotate geometry */

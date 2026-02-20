@@ -153,8 +153,8 @@ typedef struct {
     /* Column clipping */
     ColumnClip clip;
 
-    /* Per-pixel depth buffer (for correct wall ordering) */
-    int16_t *depth_buffer;  /* RENDER_WIDTH * RENDER_HEIGHT */
+    /* Depth buffer disabled; ordering by painter's algorithm only */
+    int16_t *depth_buffer;  /* unused, kept for compatibility */
 
     /* Zone rendering state */
     int16_t left_clip;
