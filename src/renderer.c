@@ -547,6 +547,8 @@ static void draw_wall_column(int x, int y_top, int y_bot,
     if (!buf || !rgb || !depth) return;
     if (x < g_renderer.left_clip || x >= g_renderer.right_clip) return;
 
+    int width = g_renderer.width;
+
     /* Short walls (e.g. step risers) can project to same row; ensure at least 1 pixel height */
     int yt = y_top, yb = y_bot;
     if (yb <= yt) yb = yt + 1;
@@ -610,8 +612,14 @@ static void draw_wall_column(int x, int y_top, int y_bot,
 
     int16_t col_z16 = (col_z > 32767) ? 32767 : (int16_t)col_z;
 
+    /* Precompute distance shade once per column (Amiga-style: luminance ∝ (64-d6)/64, min 16). */
+    int inv_d6 = 64 - amiga_d6;
+    int shade = (256 * inv_d6) / 64;
+    if (shade > 256) shade = 256;
+    if (shade < 16) shade = 16;
+
     for (int y = ct; y <= cb; y++) {
-        int pix_idx = y * g_renderer.width + x;
+        int pix_idx = y * width + x;
 
         /* Per-pixel depth test: only draw if closer than existing pixel */
         if (col_z16 >= depth[pix_idx]) {
@@ -646,24 +654,21 @@ static void draw_wall_column(int x, int y_top, int y_bot,
 
             argb = amiga12_to_argb(color_word);
             } else {
-            int gray = (64 - amiga_d6) * 255 / 64;
+            int gray = inv_d6 * 255 / 64;
             if (gray < 0) gray = 0;
             if (gray > 255) gray = 255;
             argb = 0xFF000000u | ((uint32_t)gray << 16) | ((uint32_t)gray << 8) | (uint32_t)gray;
             }
         } else {
             /* No texture or no LUT - fallback: d6=0 brightest, d6=64 darkest (Amiga range) */
-            int gray = (64 - amiga_d6) * 255 / 64;
+            int gray = inv_d6 * 255 / 64;
             if (gray < 0) gray = 0;
             if (gray > 255) gray = 255;
             argb = 0xFF000000u | ((uint32_t)gray << 16) | ((uint32_t)gray << 8) | (uint32_t)gray;
         }
 
-        /* Amiga-style distance shade: luminance ∝ (64-d6)/64. Min 16 so indoor distance gets very dark. */
+        /* Apply precomputed distance shade */
         {
-            int shade = (256 * (64 - amiga_d6)) / 64;
-            if (shade > 256) shade = 256;
-            if (shade < 16) shade = 16;
             uint32_t r = (argb >> 16) & 0xFF;
             uint32_t g = (argb >> 8) & 0xFF;
             uint32_t b = argb & 0xFF;
@@ -673,7 +678,7 @@ static void draw_wall_column(int x, int y_top, int y_bot,
             argb = (argb & 0xFF000000u) | (r << 16) | (g << 8) | b;
         }
 
-        buf[y * g_renderer.width + x] = 2; /* tag: wall */
+        buf[y * width + x] = 2; /* tag: wall */
         rgb[pix_idx] = argb;
         tex_y += tex_step;
     }
@@ -962,9 +967,9 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
     int64_t  u_step_64 = (int64_t)u_step;
     int64_t  v_step_64 = (int64_t)v_step;
 
-    uint8_t *row8 = buf + y * g_renderer.width;
-    uint32_t *row32 = rgb + y * g_renderer.width;
-    int16_t *depth = rs->depth_buffer + y * g_renderer.width;
+    uint8_t *row8 = buf + (size_t)y * w;
+    uint32_t *row32 = rgb + (size_t)y * w;
+    int16_t *depth = rs->depth_buffer + (size_t)y * w;
     
     /* Use actual distance for depth so floor/ceiling correctly occlude walls when closer.
      * Slight bias (dist - 1) so floor/ceiling win at wall boundary (step top, ceiling join). */
@@ -1306,21 +1311,23 @@ void renderer_draw_gun(GameState *state)
     uint32_t *rgb = g_renderer.rgb_buffer;
     if (!buf || !rgb) return;
 
+    int rw = g_renderer.width, rh = g_renderer.height;
+
     PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
     if (plr->gun_selected < 0) return;
 
     /* Amiga: 96 columns, 58 lines. Scale with RENDER_SCALE then by renderer size so gun matches view and rescales on resize. */
     const int gun_w_src = GUN_COLS;
     const int gun_h_src = GUN_LINES;
-    int gun_w_draw = (int)((int64_t)gun_w_src * (int64_t)RENDER_SCALE * (int64_t)g_renderer.width / RENDER_DEFAULT_WIDTH);
-    int gun_h_draw = (int)((int64_t)gun_h_src * (int64_t)RENDER_SCALE * (int64_t)g_renderer.height / RENDER_DEFAULT_HEIGHT);
+    int gun_w_draw = (int)((int64_t)gun_w_src * (int64_t)RENDER_SCALE * (int64_t)rw / RENDER_DEFAULT_WIDTH);
+    int gun_h_draw = (int)((int64_t)gun_h_src * (int64_t)RENDER_SCALE * (int64_t)rh / RENDER_DEFAULT_HEIGHT);
     if (gun_w_draw < 1) gun_w_draw = 1;
     if (gun_h_draw < 1) gun_h_draw = 1;
-    if (gun_w_draw > g_renderer.width) gun_w_draw = g_renderer.width;
-    if (gun_h_draw > g_renderer.height) gun_h_draw = g_renderer.height;
-    int gy = g_renderer.height - gun_h_draw;
+    if (gun_w_draw > rw) gun_w_draw = rw;
+    if (gun_h_draw > rh) gun_h_draw = rh;
+    int gy = rh - gun_h_draw;
     if (gy < 0) gy = 0;
-    int gx = (g_renderer.width - gun_w_draw) / 2;
+    int gx = (rw - gun_w_draw) / 2;
 
     /* Draw from loaded gun data (newgunsinhand.wad + .ptr + .pal) if present */
     const uint8_t *gun_wad = g_renderer.gun_wad;
@@ -1342,11 +1349,11 @@ void renderer_draw_gun(GameState *state)
 
         if (ptr_off != 0 || (gun_type != 5 && gun_type != 6)) {
             /* Draw scaled: map screen pixel to source by (draw size / source size) ratio */
-            for (int sy = gy; sy < gy + gun_h_draw && sy < g_renderer.height; sy++) {
+            for (int sy = gy; sy < gy + gun_h_draw && sy < rh; sy++) {
                 if (sy < 0) continue;
                 int src_row = (int)((int64_t)(sy - gy) * (int64_t)gun_h_src / gun_h_draw);
                 if (src_row >= gun_h_src) continue;
-                for (int sx = gx; sx < gx + gun_w_draw && sx < g_renderer.width; sx++) {
+                for (int sx = gx; sx < gx + gun_w_draw && sx < rw; sx++) {
                     if (sx < 0) continue;
                     int src_col = (int)((int64_t)(sx - gx) * (int64_t)gun_w_src / gun_w_draw);
                     if (src_col >= gun_w_src) continue;
@@ -1375,8 +1382,8 @@ void renderer_draw_gun(GameState *state)
 
                     uint16_t c12 = (uint16_t)((gun_pal[idx * 2u] << 8) | gun_pal[idx * 2u + 1]);
                     uint32_t c = amiga12_to_argb(c12);
-                    buf[sy * g_renderer.width + sx] = 15;
-                    rgb[sy * g_renderer.width + sx] = c;
+                    buf[sy * rw + sx] = 15;
+                    rgb[sy * rw + sx] = c;
                 }
             }
             return;
@@ -1384,19 +1391,19 @@ void renderer_draw_gun(GameState *state)
     }
 
     /* Placeholder when gun data not loaded or slot unused (narrower than WAD: 48 logical width) */
-    int placeholder_gun_w = (int)((int64_t)48 * (int64_t)RENDER_SCALE * (int64_t)g_renderer.width / RENDER_DEFAULT_WIDTH);
+    int placeholder_gun_w = (int)((int64_t)48 * (int64_t)RENDER_SCALE * (int64_t)rw / RENDER_DEFAULT_WIDTH);
     if (placeholder_gun_w < 1) placeholder_gun_w = 1;
-    int gx_ph = (g_renderer.width - placeholder_gun_w) / 2;
+    int gx_ph = (rw - placeholder_gun_w) / 2;
     uint32_t col_barrel = 0xFF808080u;
     uint32_t col_body  = 0xFF606060u;
     uint32_t col_grip  = 0xFF404040u;
     const int mid_logical = 24;  /* 48/2 in source space */
 
-    for (int y = gy; y < gy + gun_h_draw && y < g_renderer.height; y++) {
+    for (int y = gy; y < gy + gun_h_draw && y < rh; y++) {
         if (y < 0) continue;
         int local_y = y - gy;
         int local_y_logical = (int)((int64_t)local_y * (int64_t)gun_h_src / gun_h_draw);
-        for (int x = gx_ph; x < gx_ph + placeholder_gun_w && x < g_renderer.width; x++) {
+        for (int x = gx_ph; x < gx_ph + placeholder_gun_w && x < rw; x++) {
             if (x < 0) continue;
             int local_x = x - gx_ph;
             int local_x_logical = (int)((int64_t)local_x * 48 / placeholder_gun_w);
@@ -1421,8 +1428,8 @@ void renderer_draw_gun(GameState *state)
             }
 
             if (draw) {
-                buf[y * g_renderer.width + x] = 15;
-                rgb[y * g_renderer.width + x] = c;
+                buf[y * rw + x] = 15;
+                rgb[y * rw + x] = c;
             }
         }
     }
@@ -2567,8 +2574,11 @@ void renderer_draw_display(GameState *state)
     /* Vertical scale per frame: denominator scaled by screen aspect ratio (w/h vs default). */
     int w = (r->width  > 0) ? r->width  : 1;
     int h = (r->height > 0) ? r->height : 1;
-    r->proj_y_scale = (int32_t)((int64_t)PROJ_Y_NUMERATOR * (int64_t)h * (int64_t)RENDER_DEFAULT_WIDTH / ((int64_t)PROJ_Y_DENOM * (int64_t)w * (int64_t)RENDER_DEFAULT_HEIGHT));
-    if (r->proj_y_scale < 1) r->proj_y_scale = 1;
+    r->proj_y_scale = (int32_t)((int64_t)PROJ_Y_NUMERATOR / (int64_t)PROJ_Y_DENOM);
+    //if (r->proj_y_scale < 1) r->proj_y_scale = 1;
+
+    float aspect = ((float)h/ (float)w);
+    r->proj_y_scale = (int32_t)((float)r->proj_y_scale / aspect);
 
     /* 2. Setup view transform (from AB3DI.s DrawDisplay lines 3399-3438) */
     PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
@@ -2597,14 +2607,18 @@ void renderer_draw_display(GameState *state)
     r->xwobble = 0; /* Would be set from plr->bob_frame */
 
     /* 3. Initialize column clipping and depth buffer */
-    for (int i = 0; i < g_renderer.width; i++) {
-        r->clip.top[i] = 0;
-        r->clip.bot[i] = (int16_t)(g_renderer.height - 1);
-    }
-    /* Clear depth buffer to far (large Z = far away) */
-    if (r->depth_buffer) {
-        for (int i = 0; i < g_renderer.width * g_renderer.height; i++) {
-            r->depth_buffer[i] = 32767;
+    {
+        int w = r->width, h = r->height;
+        memset(r->clip.top, 0, (size_t)w * sizeof(int16_t));
+        int16_t bot_val = (int16_t)(h - 1);
+        int16_t *bot = r->clip.bot;
+        for (int i = 0; i < w; i++) bot[i] = bot_val;
+        /* Clear depth buffer to far (large Z = far away) */
+        if (r->depth_buffer) {
+            const int16_t far_z = 32767;
+            int16_t *d = r->depth_buffer;
+            size_t n = (size_t)w * (size_t)h;
+            for (size_t i = 0; i < n; i++) d[i] = far_z;
         }
     }
 
