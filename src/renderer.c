@@ -1317,11 +1317,14 @@ void renderer_draw_gun(GameState *state)
     PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
     if (plr->gun_selected < 0) return;
 
-    /* Amiga: 96 columns, 58 lines. Scale with RENDER_SCALE then by renderer size so gun matches view and rescales on resize. */
+    /* Amiga: 96 columns, 58 lines. Single scale factor so gun aspect ratio does not change with renderer aspect. */
     const int gun_w_src = GUN_COLS;
     const int gun_h_src = GUN_LINES;
-    int gun_w_draw = (int)((int64_t)gun_w_src * (int64_t)RENDER_SCALE * (int64_t)rw / RENDER_DEFAULT_WIDTH);
-    int gun_h_draw = (int)((int64_t)gun_h_src * (int64_t)RENDER_SCALE * (int64_t)rh / RENDER_DEFAULT_HEIGHT);
+    /* Scale by height so gun size tracks renderer but aspect stays fixed (width/height scale together). */
+    int gun_scale = (int)((int64_t)RENDER_SCALE * (int64_t)rh / RENDER_DEFAULT_HEIGHT);
+    if (gun_scale < 1) gun_scale = 1;
+    int gun_w_draw = gun_w_src * gun_scale;
+    int gun_h_draw = gun_h_src * gun_scale;
     if (gun_w_draw < 1) gun_w_draw = 1;
     if (gun_h_draw < 1) gun_h_draw = 1;
     if (gun_w_draw > rw) gun_w_draw = rw;
@@ -1392,7 +1395,7 @@ void renderer_draw_gun(GameState *state)
     }
 
     /* Placeholder when gun data not loaded or slot unused (narrower than WAD: 48 logical width) */
-    int placeholder_gun_w = (int)((int64_t)48 * (int64_t)RENDER_SCALE * (int64_t)rw / RENDER_DEFAULT_WIDTH);
+    int placeholder_gun_w = 48 * gun_scale;
     if (placeholder_gun_w < 1) placeholder_gun_w = 1;
     int gx_ph = (rw - placeholder_gun_w) / 2;
     uint32_t col_barrel = 0xFF808080u;
