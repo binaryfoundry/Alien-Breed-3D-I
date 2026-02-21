@@ -227,7 +227,7 @@ int level_parse(LevelState *level)
     /* Long 12: Offset to zone graph adds */
     level->zone_graph_adds = lg + zone_graph_offset;
 
-    /* Zone offset table starts at byte 16 of graphics data (big-endian longs). */
+    /* Zone offset table starts at byte 16 of graphics data. Assume big-endian; convert if clearly LE. */
     level->zone_adds = lg + 16;
     level->zone_adds_owned = false;
     level->zone_brightness_le = false;
@@ -238,6 +238,27 @@ int level_parse(LevelState *level)
 
     /* Byte 16: Number of zones (word) */
     level->num_zones = read_word(ld + 16);
+
+    /* Zone offset table at lg+16 is big-endian. Log each zone's loaded data. */
+    if (level->num_zones > 0) {
+        printf("[LEVEL] Zones: %d zones (offset table big-endian)\n", level->num_zones);
+        for (int z = 0; z < level->num_zones; z++) {
+            int32_t zoff = read_long(level->zone_adds + z * 4);
+            size_t data_len = level->data_byte_count;
+            if (zoff < 0 || (data_len != 0 && (size_t)zoff + 48u > data_len)) {
+                printf("[LEVEL]   zone[%d] offset %ld - out of range (data_len=%zu)\n", z, (long)zoff, data_len);
+                continue;
+            }
+            const uint8_t *zd = ld + zoff;
+            int16_t zone_id = read_word(zd + 0);
+            int32_t floor_y = read_long(zd + ZONE_OFF_FLOOR);
+            int32_t roof_y = read_long(zd + ZONE_OFF_ROOF);
+            int16_t bright_lo = read_word(zd + ZONE_OFF_BRIGHTNESS);
+            int16_t bright_hi = read_word(zd + ZONE_OFF_UPPER_BRIGHT);
+            printf("[LEVEL]   zone[%d] offset %ld id=%d floor=%ld roof=%ld bright=(%d,%d)\n",
+                   z, (long)zoff, (int)zone_id, (long)floor_y, (long)roof_y, (int)bright_lo, (int)bright_hi);
+        }
+    }
 
     /* Byte 20: Number of object points (word) */
     level->num_object_points = read_word(ld + 20);
