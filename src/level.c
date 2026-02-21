@@ -44,6 +44,17 @@ static void write_long_be(uint8_t *p, int32_t v)
     p[3] = (uint8_t)(uint32_t)v;
 }
 
+/* Amiga door/lift format (Anims.s): 18-byte fixed header then variable wall list.
+ * Header: Bottom(w), Top(w), curr(w), dir(w), Ptr(l), zone(w), conditions(w), 2 bytes at 16-17.
+ * Wall list at 18: (wall_number(w), ptr(l), graphic(l)) until wall_number < 0, then +2.
+ */
+static const uint8_t *skip_amiga_wall_list(const uint8_t *p)
+{
+    while (read_word(p) >= 0)
+        p += 2 + 4 + 4;
+    return p + 2;
+}
+
 /* -----------------------------------------------------------------------
  * level_parse - Parse loaded level data, resolving internal offsets
  *
@@ -98,6 +109,7 @@ int level_parse(LevelState *level)
            (long)door_offset, (long)lift_offset, (long)switch_offset, (long)zone_graph_offset);
     level->door_data_owned = false;
     level->switch_data_owned = false;
+    level->lift_data_owned = false;
 
     if (door_offset > 0) {
         const uint8_t *door_src = lg + door_offset;
@@ -206,8 +218,56 @@ int level_parse(LevelState *level)
         level->door_data = NULL;
     }
 
-    /* Long 4: Offset to lifts */
-    level->lift_data = (lift_offset > 0) ? (lg + lift_offset) : NULL;
+    /* Long 4: Offset to lifts - Amiga format: 999 terminator, then 18-byte header + variable wall list per entry */
+    if (lift_offset <= 0) {
+        level->lift_data = NULL;
+    } else {
+        const uint8_t *lift_src = lg + lift_offset;
+        int16_t first_w = read_word(lift_src);
+        if (first_w == 999) {
+            level->lift_data = NULL;
+        } else {
+            int num_zones = (int)read_word(ld + 16);
+            int nl = 0;
+            const uint8_t *d = lift_src;
+            while (read_word(d) != 999) {
+                nl++;
+                d = skip_amiga_wall_list(d + 18);
+                if (nl > 256) break;
+            }
+            int16_t zone0 = read_word(lift_src + 12);
+            if (nl > 0 && nl <= 256 && zone0 >= 0 && zone0 < num_zones) {
+                uint8_t *buf = (uint8_t *)malloc((size_t)(nl + 1) * 20u);
+                if (buf) {
+                    const uint8_t *s = lift_src;
+                    int out_idx = 0;
+                    for (int i = 0; i < nl; i++) {
+                        int16_t bottom = read_word(s + 0), top = read_word(s + 2), curr = read_word(s + 4), dir = read_word(s + 6);
+                        int16_t zone = read_word(s + 12);
+                        if (zone >= 0 && zone < num_zones) {
+                            uint8_t *t = buf + out_idx * 20;
+                            write_word_be(t + 0, zone);
+                            write_word_be(t + 2, (int16_t)0);  /* type 0 = space key */
+                            write_long_be(t + 4, (int32_t)curr * 256);
+                            write_word_be(t + 8, dir);
+                            write_long_be(t + 10, (int32_t)bottom * 256);  /* lift_top = low position */
+                            write_long_be(t + 14, (int32_t)top * 256);     /* lift_bot = high position */
+                            write_word_be(t + 18, (int16_t)0);  /* padding to 20 bytes */
+                            out_idx++;
+                        }
+                        s = skip_amiga_wall_list(s + 18);
+                    }
+                    write_word_be(buf + out_idx * 20, (int16_t)-1);
+                    level->lift_data = buf;
+                    level->lift_data_owned = true;
+                } else {
+                    level->lift_data = NULL;
+                }
+            } else {
+                level->lift_data = NULL;
+            }
+        }
+    }
 
     /* Long 8: Offset to switches */
     if (switch_offset > 0) {

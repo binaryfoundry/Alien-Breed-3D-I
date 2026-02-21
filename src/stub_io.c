@@ -703,6 +703,11 @@ void io_release_level_memory(LevelState *level)
     }
     level->switch_data = NULL;
     level->switch_data_owned = false;
+    if (level->lift_data_owned && level->lift_data) {
+        free(level->lift_data);
+    }
+    level->lift_data = NULL;
+    level->lift_data_owned = false;
     if (level->zone_adds_owned && level->zone_adds) {
         free(level->zone_adds);
     }

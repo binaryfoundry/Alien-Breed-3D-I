@@ -147,9 +147,10 @@ typedef struct {
     uint8_t *list_of_graph_rooms; /* ListOfGraphRooms - rooms visible from current */
     uint8_t *floor_tile;          /* floortile - 256x256 floor texture sheet */
 
-    /* When true, door_data / switch_data / zone_adds were allocated by level_parse (LE→BE conversion) and must be freed */
+    /* When true, door_data / switch_data / lift_data / zone_adds were allocated by level_parse and must be freed */
     bool door_data_owned;
     bool switch_data_owned;
+    bool lift_data_owned;
     bool zone_adds_owned;
 
     /* When true, zone data words (e.g. brightness at ZONE_OFF_BRIGHTNESS) are little-endian in level->data */
