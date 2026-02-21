@@ -117,6 +117,7 @@ typedef struct {
  * ----------------------------------------------------------------------- */
 typedef struct {
     uint8_t *data;               /* LEVELDATA - raw level data buffer */
+    size_t   data_byte_count;    /* size of data buffer when loaded from file; 0 = unknown */
     uint8_t *graphics;           /* LEVELGRAPHICS */
     uint8_t *clips;              /* LEVELCLIPS */
 
@@ -146,9 +147,13 @@ typedef struct {
     uint8_t *list_of_graph_rooms; /* ListOfGraphRooms - rooms visible from current */
     uint8_t *floor_tile;          /* floortile - 256x256 floor texture sheet */
 
-    /* When true, door_data / switch_data were allocated by level_parse (LE→BE conversion) and must be freed */
+    /* When true, door_data / switch_data / zone_adds were allocated by level_parse (LE→BE conversion) and must be freed */
     bool door_data_owned;
     bool switch_data_owned;
+    bool zone_adds_owned;
+
+    /* When true, zone data words (e.g. brightness at ZONE_OFF_BRIGHTNESS) are little-endian in level->data */
+    bool zone_brightness_le;
 
     int16_t  num_object_points;
     int16_t  num_zones;           /* Number of zones in the level */

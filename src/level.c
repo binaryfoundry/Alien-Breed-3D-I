@@ -215,8 +215,6 @@ int level_parse(LevelState *level)
         int num_zones_sw = (int)read_word(ld + 16);
         int16_t zone_id_be = read_word(sw_src);
         int16_t zone_id_le = read_word_le(sw_src);
-        uint16_t bit_mask_be = (uint16_t)read_word(sw_src + 4);
-        uint16_t bit_mask_le = (uint16_t)read_word_le(sw_src + 4);
 
         if (zone_id_be < 0) {
             level->switch_data = NULL;
@@ -229,14 +227,14 @@ int level_parse(LevelState *level)
             uint8_t *buf = (uint8_t *)malloc((size_t)(ns + 1) * 14u);
             if (buf) {
                 for (int i = 0; i < ns; i++) {
-                    const uint8_t *s = sw_src + i * 14;
+                    const uint8_t *ent = sw_src + i * 14;
                     uint8_t *t = buf + i * 14;
-                    write_word_be(t + 0, read_word_le(s + 0));
-                    write_word_be(t + 2, read_word_le(s + 2));
-                    write_word_be(t + 4, read_word_le(s + 4));
-                    write_long_be(t + 6, read_long_le(s + 6));
-                    write_word_be(t + 10, read_word_le(s + 10));
-                    write_word_be(t + 12, read_word_le(s + 12));
+                    write_word_be(t + 0, read_word_le(ent + 0));
+                    write_word_be(t + 2, read_word_le(ent + 2));
+                    write_word_be(t + 4, read_word_le(ent + 4));
+                    write_long_be(t + 6, read_long_le(ent + 6));
+                    write_word_be(t + 10, read_word_le(ent + 10));
+                    write_word_be(t + 12, read_word_le(ent + 12));
                 }
                 write_word_be(buf + ns * 14, (int16_t)-1);
                 level->switch_data = buf;
@@ -256,6 +254,8 @@ int level_parse(LevelState *level)
 
     /* Zone offset table starts at byte 16 of graphics data */
     level->zone_adds = lg + 16;
+    level->zone_adds_owned = false;
+    level->zone_brightness_le = false;
 
     /* ---- Level data header ---- */
     /* Byte 14: Number of points (word) */
@@ -263,6 +263,45 @@ int level_parse(LevelState *level)
 
     /* Byte 16: Number of zones (word) */
     level->num_zones = read_word(ld + 16);
+
+    /* Detect little-endian zone offset table (same pattern as door/switch data). */
+    if (level->num_zones > 0) {
+        const uint8_t *za_src = level->zone_adds;
+        int32_t first_off_be = read_long(za_src);
+        int32_t first_off_le = read_long_le(za_src);
+        /* Reasonable offset into level->data: 0 .. 16MB */
+        int reasonable_be = (first_off_be >= 0 && first_off_be <= 0x00FFFFFF);
+        int reasonable_le = (first_off_le >= 0 && first_off_le <= 0x00FFFFFF);
+        if (!reasonable_be && reasonable_le) {
+            size_t table_bytes = (size_t)(level->num_zones) * 4u;
+            uint8_t *buf = (uint8_t *)malloc(table_bytes);
+            if (buf) {
+                for (int z = 0; z < level->num_zones; z++) {
+                    write_long_be(buf + z * 4, read_long_le(za_src + z * 4));
+                }
+                level->zone_adds = buf;
+                level->zone_adds_owned = true;
+                printf("[LEVEL] Zone offset table converted from little-endian (%d zones)\n", level->num_zones);
+            }
+        }
+    }
+
+    /* Detect little-endian zone brightness words (causes wrong/flashing lights if read as BE). */
+    if (level->num_zones > 0 && level->zone_adds && level->data) {
+        int32_t first_off = read_long(level->zone_adds);
+        if (first_off >= 0) {
+            const uint8_t *zd = ld + first_off;
+            int16_t bright_lo_be = (int16_t)((zd[ZONE_OFF_BRIGHTNESS  ] << 8) | zd[ZONE_OFF_BRIGHTNESS   + 1]);
+            int16_t bright_lo_le = (int16_t)((zd[ZONE_OFF_BRIGHTNESS+1] << 8) | zd[ZONE_OFF_BRIGHTNESS  ]);
+            /* Valid brightness 0-31; anim high byte 1-3 gives values like 0x0100, 0x0200, 0x0300 */
+            int valid_be = (bright_lo_be >= 0 && bright_lo_be <= 31) || (bright_lo_be >= 0x0100 && bright_lo_be <= 0x0300);
+            int valid_le = (bright_lo_le >= 0 && bright_lo_le <= 31) || (bright_lo_le >= 0x0100 && bright_lo_le <= 0x0300);
+            if (!valid_be && valid_le) {
+                level->zone_brightness_le = true;
+                printf("[LEVEL] Zone brightness words detected as little-endian\n");
+            }
+        }
+    }
 
     /* Byte 20: Number of object points (word) */
     level->num_object_points = read_word(ld + 20);
@@ -341,6 +380,73 @@ int level_parse(LevelState *level)
             sw += 14;
             si++;
         }
+    }
+
+    /* Log zones with animated (flashing) brightness (anim 1=pulse, 2=flicker, 3=fire; high or low byte). Try BE then LE. */
+    if (level->zone_adds && level->data && level->num_zones > 0) {
+        int use_le = level->zone_brightness_le;
+        int flashing_count = 0;
+        /* Zone offsets point into level->data; use actual size when loaded from file */
+        int32_t max_zoff = 0x00FFFFFF;
+        if (level->data_byte_count > 32)
+            max_zoff = (int32_t)(level->data_byte_count - 32);
+        for (int try_le = 0; try_le < 2; try_le++) {
+            int scan_le = (try_le == 0) ? use_le : !use_le;
+            int count = 0;
+            for (int z = 0; z < level->num_zones; z++) {
+                int32_t zoff = read_long(level->zone_adds + z * 4);
+                if (zoff < 0 || zoff > max_zoff) continue;
+                const uint8_t *zd = ld + zoff;
+                int16_t bright_lo = scan_le
+                    ? (int16_t)((zd[ZONE_OFF_BRIGHTNESS  +1]<<8)|zd[ZONE_OFF_BRIGHTNESS  ])
+                    : (int16_t)((zd[ZONE_OFF_BRIGHTNESS  ]<<8)|zd[ZONE_OFF_BRIGHTNESS  +1]);
+                int16_t bright_hi = scan_le
+                    ? (int16_t)((zd[ZONE_OFF_UPPER_BRIGHT+1]<<8)|zd[ZONE_OFF_UPPER_BRIGHT])
+                    : (int16_t)((zd[ZONE_OFF_UPPER_BRIGHT]<<8)|zd[ZONE_OFF_UPPER_BRIGHT+1]);
+                unsigned hi_lo = ((unsigned)((uint16_t)bright_lo >> 8) & 0xFFu), lo_lo = ((uint16_t)bright_lo & 0xFFu);
+                unsigned hi_hi = ((unsigned)((uint16_t)bright_hi >> 8) & 0xFFu), lo_hi = ((uint16_t)bright_hi & 0xFFu);
+                unsigned anim_lo = (hi_lo >= 1u && hi_lo <= 3u) ? hi_lo : (lo_lo >= 1u && lo_lo <= 3u) ? lo_lo : 0;
+                unsigned anim_hi = (hi_hi >= 1u && hi_hi <= 3u) ? hi_hi : (lo_hi >= 1u && lo_hi <= 3u) ? lo_hi : 0;
+                if (anim_lo != 0 || anim_hi != 0) {
+                    if (try_le == 0) {
+                        const char *name_lo = (anim_lo == 1) ? "pulse" : (anim_lo == 2) ? "flicker" : (anim_lo == 3) ? "fire" : "static";
+                        const char *name_hi = (anim_hi == 1) ? "pulse" : (anim_hi == 2) ? "flicker" : (anim_hi == 3) ? "fire" : "static";
+                        printf("[LEVEL] zone[%d] flashing: lower=%s (0x%04X) upper=%s (0x%04X)\n",
+                               z, name_lo, (unsigned)(uint16_t)bright_lo, name_hi, (unsigned)(uint16_t)bright_hi);
+                    }
+                    count++;
+                }
+            }
+            if (try_le == 0) {
+                flashing_count = count;
+                use_le = scan_le;
+            } else if (count > 0 && flashing_count == 0) {
+                level->zone_brightness_le = true;
+                use_le = 1;
+                printf("[LEVEL] Zone brightness words detected as little-endian (%d flashing zones found with LE)\n", count);
+                for (int z = 0; z < level->num_zones; z++) {
+                    int32_t zoff = read_long(level->zone_adds + z * 4);
+                    if (zoff < 0 || zoff > max_zoff) continue;
+                    const uint8_t *zd = ld + zoff;
+                    int16_t bright_lo = (int16_t)((zd[ZONE_OFF_BRIGHTNESS  +1]<<8)|zd[ZONE_OFF_BRIGHTNESS  ]);
+                    int16_t bright_hi = (int16_t)((zd[ZONE_OFF_UPPER_BRIGHT+1]<<8)|zd[ZONE_OFF_UPPER_BRIGHT]);
+                    unsigned hi_lo = ((unsigned)((uint16_t)bright_lo >> 8) & 0xFFu), lo_lo = ((uint16_t)bright_lo & 0xFFu);
+                    unsigned hi_hi = ((unsigned)((uint16_t)bright_hi >> 8) & 0xFFu), lo_hi = ((uint16_t)bright_hi & 0xFFu);
+                    unsigned anim_lo = (hi_lo >= 1u && hi_lo <= 3u) ? hi_lo : (lo_lo >= 1u && lo_lo <= 3u) ? lo_lo : 0;
+                    unsigned anim_hi = (hi_hi >= 1u && hi_hi <= 3u) ? hi_hi : (lo_hi >= 1u && lo_hi <= 3u) ? lo_hi : 0;
+                    if (anim_lo != 0 || anim_hi != 0) {
+                        const char *name_lo = (anim_lo == 1) ? "pulse" : (anim_lo == 2) ? "flicker" : (anim_lo == 3) ? "fire" : "static";
+                        const char *name_hi = (anim_hi == 1) ? "pulse" : (anim_hi == 2) ? "flicker" : (anim_hi == 3) ? "fire" : "static";
+                        printf("[LEVEL] zone[%d] flashing: lower=%s (0x%04X) upper=%s (0x%04X)\n",
+                               z, name_lo, (unsigned)(uint16_t)bright_lo, name_hi, (unsigned)(uint16_t)bright_hi);
+                    }
+                }
+                flashing_count = count;
+                break;
+            }
+        }
+        printf("[LEVEL] %d zone(s) with animated (flashing) brightness (checked %d zones, brightness %s)\n",
+               flashing_count, level->num_zones, use_le ? "LE" : "BE");
     }
 
     return 0;

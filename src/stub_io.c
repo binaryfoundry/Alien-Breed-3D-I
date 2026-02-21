@@ -368,6 +368,7 @@ static void build_test_level_data(LevelState *level)
     /* Store in level state - set pointers directly (bypass level_parse
      * since our test data isn't in the exact original header format) */
     level->data = buf;
+    level->data_byte_count = (size_t)total;
     level->zone_adds = buf + off_zone_table;
     level->points = buf + off_points;
     level->floor_lines = buf + off_flines;
@@ -611,6 +612,7 @@ int io_load_level_data(LevelState *level, int level_num)
     size_t size = 0;
     if (sb_load_file(path, &data, &size) == 0 && data) {
         level->data = data;
+        level->data_byte_count = size;
         printf("[IO] Loaded level data: %s (%zu bytes)\n", path, size);
         return 0;
     }
@@ -690,7 +692,7 @@ void io_release_level_memory(LevelState *level)
      * so it must NOT be freed separately. Just NULL it. */
     level->list_of_graph_rooms = NULL;
 
-    /* Free door/switch tables if we allocated them (LE→BE conversion); do before freeing graphics */
+    /* Free door/switch/zone_adds tables if we allocated them (LE→BE conversion); do before freeing graphics */
     if (level->door_data_owned && level->door_data) {
         free(level->door_data);
     }
@@ -701,8 +703,14 @@ void io_release_level_memory(LevelState *level)
     }
     level->switch_data = NULL;
     level->switch_data_owned = false;
+    if (level->zone_adds_owned && level->zone_adds) {
+        free(level->zone_adds);
+    }
+    level->zone_adds = NULL;
+    level->zone_adds_owned = false;
 
     free(level->data);              level->data = NULL;
+    level->data_byte_count = 0;
     free(level->graphics);          level->graphics = NULL;
     free(level->clips);             level->clips = NULL;
 

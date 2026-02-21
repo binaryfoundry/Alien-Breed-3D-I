@@ -31,11 +31,13 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Anim type 1=pulse, 2=flicker, 3=fire. Only high byte (static 1/2/3 must not animate). */
+/* Anim type 1=pulse, 2=flicker, 3=fire. Amiga uses high byte; some levels use low byte (e.g. 0x0001). */
 static inline unsigned zone_anim_type(int16_t word)
 {
     unsigned hi = (unsigned)((uint16_t)word >> 8) & 0xFFu;
+    unsigned lo = (unsigned)((uint16_t)word) & 0xFFu;
     if (hi >= 1u && hi <= 3u) return hi;
+    if (lo >= 1u && lo <= 3u) return lo;
     return 0;
 }
 
@@ -180,14 +182,19 @@ void game_loop(GameState *state)
             /* ---- Phase 10: Zone brightness (level data: ZONE_OFF_BRIGHTNESS / ZONE_OFF_UPPER_BRIGHT) ---- */
             if (state->level.zone_adds && state->level.data &&
                 state->level.zone_bright_table) {
+                int use_le = state->level.zone_brightness_le;
                 for (int z = 0; z < state->level.num_zones; z++) {
                     const uint8_t *za = state->level.zone_adds;
                     int32_t zoff = (int32_t)((za[z*4]<<24)|(za[z*4+1]<<16)|
                                    (za[z*4+2]<<8)|za[z*4+3]);
                     const uint8_t *zd = state->level.data + zoff;
 
-                    int16_t bright_lo = (int16_t)((zd[ZONE_OFF_BRIGHTNESS  ] << 8) | zd[ZONE_OFF_BRIGHTNESS   + 1]);
-                    int16_t bright_hi = (int16_t)((zd[ZONE_OFF_UPPER_BRIGHT] << 8) | zd[ZONE_OFF_UPPER_BRIGHT + 1]);
+                    int16_t bright_lo = use_le
+                        ? (int16_t)((zd[ZONE_OFF_BRIGHTNESS  +1]<<8)|zd[ZONE_OFF_BRIGHTNESS  ])
+                        : (int16_t)((zd[ZONE_OFF_BRIGHTNESS  ]<<8)|zd[ZONE_OFF_BRIGHTNESS  +1]);
+                    int16_t bright_hi = use_le
+                        ? (int16_t)((zd[ZONE_OFF_UPPER_BRIGHT+1]<<8)|zd[ZONE_OFF_UPPER_BRIGHT])
+                        : (int16_t)((zd[ZONE_OFF_UPPER_BRIGHT]<<8)|zd[ZONE_OFF_UPPER_BRIGHT+1]);
 
                     /* Static only when anim type is 0 (high and low byte not 1/2/3). */
                     if (zone_anim_type(bright_lo) == 0) {
@@ -204,13 +211,18 @@ void game_loop(GameState *state)
             /* Animated zones: anim type 1/2/3 (high or low byte) = pulse/flicker/fire. */
             if (state->level.zone_adds && state->level.data &&
                 state->level.zone_bright_table) {
+                int use_le = state->level.zone_brightness_le;
                 for (int z = 0; z < state->level.num_zones; z++) {
                     const uint8_t *za = state->level.zone_adds;
                     int32_t zoff = (int32_t)((za[z*4]<<24)|(za[z*4+1]<<16)|
                                    (za[z*4+2]<<8)|za[z*4+3]);
                     const uint8_t *zd = state->level.data + zoff;
-                    int16_t bright_lo = (int16_t)((zd[ZONE_OFF_BRIGHTNESS  ] << 8) | zd[ZONE_OFF_BRIGHTNESS   + 1]);
-                    int16_t bright_hi = (int16_t)((zd[ZONE_OFF_UPPER_BRIGHT] << 8) | zd[ZONE_OFF_UPPER_BRIGHT + 1]);
+                    int16_t bright_lo = use_le
+                        ? (int16_t)((zd[ZONE_OFF_BRIGHTNESS  +1]<<8)|zd[ZONE_OFF_BRIGHTNESS  ])
+                        : (int16_t)((zd[ZONE_OFF_BRIGHTNESS  ]<<8)|zd[ZONE_OFF_BRIGHTNESS  +1]);
+                    int16_t bright_hi = use_le
+                        ? (int16_t)((zd[ZONE_OFF_UPPER_BRIGHT+1]<<8)|zd[ZONE_OFF_UPPER_BRIGHT])
+                        : (int16_t)((zd[ZONE_OFF_UPPER_BRIGHT]<<8)|zd[ZONE_OFF_UPPER_BRIGHT+1]);
                     unsigned int anim_lo = zone_anim_type(bright_lo);
                     unsigned int anim_hi = zone_anim_type(bright_hi);
                     if (anim_lo >= 1 && anim_lo <= 3) {
