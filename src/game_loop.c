@@ -41,6 +41,14 @@ static inline unsigned zone_anim_type(int16_t word)
     return 0;
 }
 
+/* Base brightness from the other byte (Amiga: base + anim table value). */
+static inline int zone_anim_base(int16_t word, unsigned anim_type)
+{
+    unsigned hi = (unsigned)((uint16_t)word >> 8) & 0xFFu;
+    unsigned lo = (unsigned)((uint16_t)word) & 0xFFu;
+    return (hi == anim_type) ? (int)lo : (int)hi;  /* anim in high -> base=low; else base=high */
+}
+
 /* Amiga key codes used in the original */
 #define KEY_PAUSE   0x19
 #define KEY_ESC     0x45
@@ -208,7 +216,7 @@ void game_loop(GameState *state)
 
             bright_anim_handler(state);
 
-            /* Animated zones: anim type 1/2/3 (high or low byte) = pulse/flicker/fire. */
+            /* Animated zones: Amiga uses base (other byte) + anim table value; clamp 0-15. */
             if (state->level.zone_adds && state->level.data &&
                 state->level.zone_bright_table) {
                 int use_le = state->level.zone_brightness_le;
@@ -226,10 +234,18 @@ void game_loop(GameState *state)
                     unsigned int anim_lo = zone_anim_type(bright_lo);
                     unsigned int anim_hi = zone_anim_type(bright_hi);
                     if (anim_lo >= 1 && anim_lo <= 3) {
-                        state->level.zone_bright_table[z] = state->level.bright_anim_values[anim_lo - 1];
+                        int base = zone_anim_base(bright_lo, anim_lo);
+                        int v = base + state->level.bright_anim_values[anim_lo - 1];
+                        if (v < 0) v = 0;
+                        if (v > 15) v = 15;
+                        state->level.zone_bright_table[z] = (int16_t)v;
                     }
                     if (state->level.num_zones > 0 && anim_hi >= 1 && anim_hi <= 3) {
-                        state->level.zone_bright_table[z + state->level.num_zones] = state->level.bright_anim_values[anim_hi - 1];
+                        int base = zone_anim_base(bright_hi, anim_hi);
+                        int v = base + state->level.bright_anim_values[anim_hi - 1];
+                        if (v < 0) v = 0;
+                        if (v > 15) v = 15;
+                        state->level.zone_bright_table[z + state->level.num_zones] = (int16_t)v;
                     }
                 }
             }

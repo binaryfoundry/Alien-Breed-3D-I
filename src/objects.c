@@ -1560,8 +1560,8 @@ void do_water_anims(GameState *state)
 }
 
 #define BRIGHT_ANIM_SENTINEL 999
-/* Advance anim tables only every N logic ticks to slow the cycle (~25 Hz with N=2). */
-#define BRIGHT_ANIM_TICK_DIVIDER 2
+/* Advance anim tables every logic tick (50 Hz), matching Amiga vblank. */
+#define BRIGHT_ANIM_TICK_DIVIDER 1
 
 /* Advance one brightness animation; returns current value, updates index. */
 static int16_t bright_anim_advance(const int16_t *table, unsigned int *idx)
