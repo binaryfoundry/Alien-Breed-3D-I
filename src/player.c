@@ -649,7 +649,6 @@ static void player_full_control(PlayerState *plr, GameState *state, int plr_num)
     ctx.awayfromwall = 0;  /* AB3DI.s PLR1_Control: move.b #0,awayfromwall */
     ctx.exitfirst = 0;
     ctx.wallbounce = 0;
-    ctx.pass_through_walls = 1;  /* allow player to walk through walls */
 
     /* Run wall/room collision in small integer sub-steps to avoid tunneling
      * through thin walls/corners when per-tick velocity gets high. */

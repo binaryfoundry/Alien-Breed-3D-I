@@ -41,7 +41,6 @@ typedef struct {
     uint16_t wall_flags;           /* wall type flags */
     int8_t   hitwall;              /* result: did we hit something? */
     int8_t   pos_shift;            /* position scale: 0 = integer, 16 = 16.16 fp */
-    int8_t   pass_through_walls;  /* if set, skip wall collision (player can walk through walls) */
 } MoveContext;
 
 /* -----------------------------------------------------------------------

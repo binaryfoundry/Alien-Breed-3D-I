@@ -534,8 +534,7 @@ void move_object(MoveContext *ctx, LevelState *level)
     gobackanddoitallagain:
         if (total_iterations >= max_total) return;
 
-        /* ---- Phase 1: Wall collision (skip if pass_through_walls) ---- */
-        if (ctx->pass_through_walls) goto phase3;
+        /* ---- Phase 1: Wall collision ---- */
     restart_walls:
         if (total_iterations >= max_total) goto phase3;
 
@@ -575,7 +574,6 @@ void move_object(MoveContext *ctx, LevelState *level)
     } else {
         /* ==== Brute-force fallback (objects/AI without zone data) ====
          * Check all floor lines. Less accurate but works without zone info. */
-        if (ctx->pass_through_walls) return;  /* no wall checks */
         int32_t num_lines = (int32_t)level->num_floor_lines;
         if (num_lines <= 0) return;
 
