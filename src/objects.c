@@ -13,6 +13,7 @@
 #include "objects.h"
 #include "ai.h"
 #include "game_data.h"
+#include "level.h"
 #include "movement.h"
 #include "math_tables.h"
 #include "stub_audio.h"
@@ -1277,23 +1278,15 @@ void door_routine(GameState *state)
         wbe16(door + 8, door_vel);
         wbe16(door + 12, timer);
 
-        /* Update zone data (door height affects zone roof).
-         * Renderer expects zone_roof in world Y: 0 = floor (closed, no opening), negative = ceiling (open).
-         * door_pos: 0 = open, door_max*256 = closed. So zone_roof = door_pos - door_max*256.
-         * Add a sine-wave bobbing offset so doors animate up and down. */
-        if (state->level.zone_adds && state->level.data &&
-            zone_id >= 0 && zone_id < state->level.num_zones) {
-            const uint8_t *za = state->level.zone_adds;
-            int32_t zoff = (int32_t)((za[zone_id*4]<<24)|(za[zone_id*4+1]<<16)|
-                           (za[zone_id*4+2]<<8)|za[zone_id*4+3]);
-            uint8_t *zd = state->level.data + zoff;
+        /* Update zone data (door height affects zone roof). Write base_roof + door_delta so we
+         * don't overwrite the room's real roof; door_pos 0 = open, door_max*256 = closed. */
+        {
             int32_t door_max_val = (int32_t)door_max * 256;
-            int32_t zone_roof_y = door_pos - door_max_val;  /* 0 when closed, -door_max_val when open */
-
-            zd[6] = (uint8_t)(zone_roof_y >> 24);
-            zd[7] = (uint8_t)(zone_roof_y >> 16);
-            zd[8] = (uint8_t)(zone_roof_y >> 8);
-            zd[9] = (uint8_t)(zone_roof_y);
+            int32_t base_roof = 0;
+            if (state->level.zone_base_roof && zone_id >= 0 && zone_id < state->level.num_zones)
+                base_roof = state->level.zone_base_roof[zone_id];
+            int32_t zone_roof_y = base_roof + (door_pos - door_max_val);
+            level_set_zone_roof(&state->level, zone_id, zone_roof_y);
         }
 
         door += 16;
@@ -1381,17 +1374,13 @@ void lift_routine(GameState *state)
         wbe32(lift + 4, lift_pos);
         wbe16(lift + 8, lift_vel);
 
-        /* Update zone floor height (same sine-wave bobbing as doors for consistency) */
-        if (state->level.zone_adds && state->level.data &&
-            zone_id >= 0 && zone_id < state->level.num_zones) {
-            const uint8_t *za = state->level.zone_adds;
-            int32_t zoff = (int32_t)((za[zone_id*4]<<24)|(za[zone_id*4+1]<<16)|
-                           (za[zone_id*4+2]<<8)|za[zone_id*4+3]);
-            uint8_t *zd = state->level.data + zoff;
-            zd[2] = (uint8_t)(lift_pos >> 24);
-            zd[3] = (uint8_t)(lift_pos >> 16);
-            zd[4] = (uint8_t)(lift_pos >> 8);
-            zd[5] = (uint8_t)(lift_pos);
+        /* Update zone floor height: base_floor + (lift_pos - lift_bot) so room floor stays valid. */
+        if (zone_id >= 0 && zone_id < state->level.num_zones) {
+            int32_t base_floor = 0;
+            if (state->level.zone_base_floor)
+                base_floor = state->level.zone_base_floor[zone_id];
+            int32_t zone_floor_y = base_floor + (lift_pos - lift_bot);
+            level_set_zone_floor(&state->level, zone_id, zone_floor_y);
         }
 
         /* Adjust player Y if standing on this lift */

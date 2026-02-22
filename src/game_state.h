@@ -159,6 +159,11 @@ typedef struct {
     int16_t  num_object_points;
     int16_t  num_zones;           /* Number of zones in the level */
     int32_t  num_floor_lines;    /* Number of floor/wall line segments (for brute-force collision) */
+
+    /* Original ZD_ROOF per zone (saved at load so door/lift can write base_roof + delta). */
+    int32_t *zone_base_roof;
+    /* Original ZD_FLOOR per zone (saved at load so lift can write base_floor + delta). */
+    int32_t *zone_base_floor;
 } LevelState;
 
 /* -----------------------------------------------------------------------

@@ -260,6 +260,39 @@ int level_parse(LevelState *level)
         }
     }
 
+    /* Save original zone roof for each zone so door_routine can write base_roof + door_delta. */
+    if (level->num_zones > 0) {
+        level->zone_base_roof = (int32_t *)malloc((size_t)level->num_zones * sizeof(int32_t));
+        if (level->zone_base_roof) {
+            size_t data_len = level->data_byte_count;
+            for (int z = 0; z < level->num_zones; z++) {
+                int32_t zoff = read_long(level->zone_adds + (size_t)z * 4u);
+                if (zoff >= 0 && (data_len == 0 || (size_t)zoff + 10u <= data_len))
+                    level->zone_base_roof[z] = read_long(ld + zoff + ZONE_OFF_ROOF);
+                else
+                    level->zone_base_roof[z] = 0;
+            }
+        } else {
+            level->zone_base_roof = NULL;
+        }
+        level->zone_base_floor = (int32_t *)malloc((size_t)level->num_zones * sizeof(int32_t));
+        if (level->zone_base_floor) {
+            size_t data_len = level->data_byte_count;
+            for (int z = 0; z < level->num_zones; z++) {
+                int32_t zoff = read_long(level->zone_adds + (size_t)z * 4u);
+                if (zoff >= 0 && (data_len == 0 || (size_t)zoff + 10u <= data_len))
+                    level->zone_base_floor[z] = read_long(ld + zoff + ZONE_OFF_FLOOR);
+                else
+                    level->zone_base_floor[z] = 0;
+            }
+        } else {
+            level->zone_base_floor = NULL;
+        }
+    } else {
+        level->zone_base_roof = NULL;
+        level->zone_base_floor = NULL;
+    }
+
     /* Byte 20: Number of object points (word) */
     level->num_object_points = read_word(ld + 20);
 
@@ -444,4 +477,113 @@ void level_assign_clips(LevelState *level, int16_t num_zones)
 
     printf("[LEVEL] Clips assigned, connect table at offset %d\n",
            (int)clip_byte_offset);
+}
+
+int level_get_zone_info(const LevelState *level, int16_t zone_id, ZoneInfo *out)
+{
+    if (!out || !level->zone_adds || !level->data || level->num_zones <= 0)
+        return -1;
+    if (zone_id < 0 || zone_id >= level->num_zones)
+        return -1;
+    int32_t zoff = read_long(level->zone_adds + (size_t)zone_id * 4u);
+    size_t data_len = level->data_byte_count;
+    if (zoff < 0 || (data_len != 0 && (size_t)zoff + 48u > data_len))
+        return -1;
+    const uint8_t *zd = level->data + zoff;
+    out->zone_id = read_word(zd + 0);
+    out->floor_y = read_long(zd + ZONE_OFF_FLOOR);
+    out->roof_y = read_long(zd + ZONE_OFF_ROOF);
+    out->upper_floor_y = read_long(zd + ZONE_OFF_UPPER_FLOOR);
+    out->upper_roof_y = read_long(zd + ZONE_OFF_UPPER_ROOF);
+    out->water_y = read_long(zd + ZONE_OFF_WATER);
+    out->brightness = read_word(zd + ZONE_OFF_BRIGHTNESS);
+    out->upper_brightness = read_word(zd + ZONE_OFF_UPPER_BRIGHT);
+    out->tel_zone = read_word(zd + ZONE_OFF_TEL_ZONE);
+    out->tel_x = read_word(zd + ZONE_OFF_TEL_X);
+    out->tel_z = read_word(zd + ZONE_OFF_TEL_Z);
+    return 0;
+}
+
+uint8_t *level_get_zone_data_ptr(LevelState *level, int16_t zone_id)
+{
+    if (!level->zone_adds || !level->data || level->num_zones <= 0)
+        return NULL;
+    if (zone_id < 0 || zone_id >= level->num_zones)
+        return NULL;
+    int32_t zoff = read_long(level->zone_adds + (size_t)zone_id * 4u);
+    size_t data_len = level->data_byte_count;
+    if (zoff < 0 || (data_len != 0 && (size_t)zoff + 48u > data_len))
+        return NULL;
+
+    return level->data + zoff;
+}
+
+static inline int16_t swap16(int16_t v)
+{
+    return (int16_t)(((uint16_t)v >> 8) | ((uint16_t)v << 8));
+}
+static inline int32_t swap32(int32_t v)
+{
+    return (int32_t)(((uint32_t)v >> 24) | (((uint32_t)v >> 8) & 0xFF00u) |
+                     (((uint32_t)v << 8) & 0xFF0000u) | ((uint32_t)v << 24));
+}
+
+ZoneInfo zone_info_swap_endianness(const ZoneInfo *z)
+{
+    ZoneInfo out = {0};
+    if (!z) return out;
+    out.zone_id = swap16(z->zone_id);
+    out.floor_y = swap32(z->floor_y);
+    out.roof_y = swap32(z->roof_y);
+    out.upper_floor_y = swap32(z->upper_floor_y);
+    out.upper_roof_y = swap32(z->upper_roof_y);
+    out.water_y = swap32(z->water_y);
+    out.brightness = swap16(z->brightness);
+    out.upper_brightness = swap16(z->upper_brightness);
+    out.tel_zone = swap16(z->tel_zone);
+    out.tel_x = swap16(z->tel_x);
+    out.tel_z = swap16(z->tel_z);
+    return out;
+}
+
+void level_log_zones(const LevelState *level)
+{
+    if (!level->zone_adds || !level->data || level->num_zones <= 0)
+        return;
+    const uint8_t *ld = level->data;
+    size_t data_len = level->data_byte_count;
+    printf("[LEVEL] Zones: %d zones (offset table big-endian)\n", level->num_zones);
+    for (int z = 0; z < level->num_zones; z++) {
+        int32_t zoff = read_long(level->zone_adds + (size_t)z * 4u);
+        if (zoff < 0 || (data_len != 0 && (size_t)zoff + 48u > data_len)) {
+            printf("[LEVEL]   zone[%d] offset %ld - out of range (data_len=%zu)\n", z, (long)zoff, data_len);
+            continue;
+        }
+        const uint8_t *zd = ld + zoff;
+        int16_t zone_id = read_word(zd + 0);
+        int32_t floor_y = read_long(zd + ZONE_OFF_FLOOR);
+        int32_t roof_y = read_long(zd + ZONE_OFF_ROOF);
+        int16_t bright_lo = read_word(zd + ZONE_OFF_BRIGHTNESS);
+        int16_t bright_hi = read_word(zd + ZONE_OFF_UPPER_BRIGHT);
+        printf("[LEVEL]   zone[%d] offset %ld id=%d floor=%ld roof=%ld bright=(%d,%d)\n",
+               z, (long)zoff, (int)zone_id, (long)floor_y, (long)roof_y, (int)bright_lo, (int)bright_hi);
+    }
+}
+
+int level_set_zone_roof(LevelState *level, int16_t zone_id, int32_t roof_y)
+{
+    uint8_t *zd = level_get_zone_data_ptr(level, zone_id);
+    if (!zd) return -1;
+    write_long_be(zd + ZONE_OFF_ROOF, roof_y);
+
+    return 0;
+}
+
+int level_set_zone_floor(LevelState *level, int16_t zone_id, int32_t floor_y)
+{
+    uint8_t *zd = level_get_zone_data_ptr(level, zone_id);
+    if (!zd) return -1;
+    write_long_be(zd + ZONE_OFF_FLOOR, floor_y);
+
+    return 0;
 }

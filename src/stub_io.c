@@ -381,6 +381,17 @@ static void build_test_level_data(LevelState *level)
     level->num_floor_lines = NUM_FLINES;
     level->point_brights = NULL; /* No per-point brightness for test level */
 
+    level->zone_base_roof = (int32_t *)malloc((size_t)NUM_ZONES * sizeof(int32_t));
+    if (level->zone_base_roof) {
+        for (int z = 0; z < NUM_ZONES; z++)
+            level->zone_base_roof[z] = ROOF_H;
+    }
+    level->zone_base_floor = (int32_t *)malloc((size_t)NUM_ZONES * sizeof(int32_t));
+    if (level->zone_base_floor) {
+        for (int z = 0; z < NUM_ZONES; z++)
+            level->zone_base_floor[z] = FLOOR_H;
+    }
+
     /* Allocate player shot data (20 bullet slots for projectile weapons).
      * Each slot is OBJECT_SIZE bytes.  zone < 0 means the slot is free. */
     {
@@ -713,6 +724,8 @@ void io_release_level_memory(LevelState *level)
     }
     level->zone_adds = NULL;
     level->zone_adds_owned = false;
+    free(level->zone_base_roof);    level->zone_base_roof = NULL;
+    free(level->zone_base_floor);  level->zone_base_floor = NULL;
 
     free(level->data);              level->data = NULL;
     level->data_byte_count = 0;

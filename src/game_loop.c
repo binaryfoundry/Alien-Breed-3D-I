@@ -19,6 +19,7 @@
  */
 
 #include "game_loop.h"
+#include "level.h"
 #include "player.h"
 #include "objects.h"
 #include "game_data.h"
@@ -85,6 +86,7 @@ void game_loop(GameState *state)
     Uint32 last_ticks = SDL_GetTicks();
     int pending_vblanks = 0;
     Uint32 vblank_remainder_ms = 0;
+    static Uint32 last_zone_log_ticks = 0;
 
     while (state->running) {
 
@@ -108,6 +110,12 @@ void game_loop(GameState *state)
             vblank_remainder_ms += elapsed;
             pending_vblanks += (int)(vblank_remainder_ms / 20);
             vblank_remainder_ms %= 20;
+
+            /* Zone list debug output every 5 seconds (disabled) */
+            /* if (state->level.num_zones > 0 && now - last_zone_log_ticks >= 5000) {
+                level_log_zones(&state->level);
+                last_zone_log_ticks = now;
+            } */
         }
 
         /* ================================================================
