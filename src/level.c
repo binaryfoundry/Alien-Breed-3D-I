@@ -176,10 +176,11 @@ int level_parse(LevelState *level)
                             uint8_t *t = buf + out_idx * 22;
                             write_word_be(t + 0, zone);
                             write_word_be(t + 2, (int16_t)0);
-                            write_long_be(t + 4, (int32_t)curr * 256);
+                            /* Amiga: asr.w #2,d3 then muls #256,d3 → zone roof = curr*64, not curr*256 */
+                            write_long_be(t + 4, (int32_t)curr * 64);
                             write_word_be(t + 8, dir);
-                            write_long_be(t + 10, (int32_t)top * 256);
-                            write_long_be(t + 14, (int32_t)bottom * 256);
+                            write_long_be(t + 10, (int32_t)top * 64);
+                            write_long_be(t + 14, (int32_t)bottom * 64);
                             write_word_be(t + 18, (int16_t)0);
                             write_word_be(t + 20, cond);
                             out_idx++;

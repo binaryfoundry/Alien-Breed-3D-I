@@ -1251,9 +1251,9 @@ void door_routine(GameState *state)
             door_vel = -16; /* Open speed (toward top) */
         }
 
-        /* Animate door position: top = open, bot = closed */
+        /* Animate door position: top = open, bot = closed. Amiga scale: pos/top/bot use *64 (asr #2 then muls #256). */
         if (door_vel != 0) {
-            door_pos += (int32_t)door_vel * state->temp_frames * 256;
+            door_pos += (int32_t)door_vel * state->temp_frames * 64;
 
             if (door_pos <= door_top) {
                 door_pos = door_top;
