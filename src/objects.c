@@ -1191,6 +1191,7 @@ void door_routine(GameState *state)
     if (!state->level.door_data) return;
 
     uint8_t *door = state->level.door_data;
+    int door_idx = 0;
 
     /* Iterate door entries (22 bytes each, terminated by -1). Same layout as lift: pos/top/bot (world *256). */
     while (1) {
@@ -1280,6 +1281,27 @@ void door_routine(GameState *state)
         if (zone_id >= 0 && zone_id < state->level.num_zones)
             level_set_zone_roof(&state->level, zone_id, door_pos);
 
+        /* Amiga-style: patch floor line 14 and graphics wall record for each door wall (when data was loaded). */
+        if (state->level.door_wall_list && state->level.door_wall_list_offsets &&
+            state->level.graphics && door_idx < state->level.num_doors) {
+            uint32_t start = state->level.door_wall_list_offsets[door_idx];
+            uint32_t end   = state->level.door_wall_list_offsets[door_idx + 1];
+            for (uint32_t j = start; j < end; j++) {
+                const uint8_t *ent = state->level.door_wall_list + j * 6u;
+                int16_t fline = be16(ent);
+                int32_t gfx_off = (int32_t)be32(ent + 2);
+                if (state->level.floor_lines && fline >= 0 && (int32_t)fline < state->level.num_floor_lines) {
+                    uint8_t *fl = state->level.floor_lines + (uint32_t)(int16_t)fline * 16u;
+                    wbe16(fl + 14, (int16_t)(uint16_t)0x8000);  /* door wall flag (Amiga doorwalls) */
+                }
+                if (gfx_off >= 0) {
+                    uint8_t *wall_rec = state->level.graphics + (uint32_t)gfx_off;
+                    wbe32(wall_rec + 24, door_pos);   /* Amiga: move.l d3,24(a1) = door height for this wall */
+                }
+            }
+        }
+
+        door_idx++;
         door += 22;
     }
 }
