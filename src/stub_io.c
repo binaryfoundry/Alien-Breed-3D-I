@@ -707,6 +707,14 @@ void io_release_level_memory(LevelState *level)
     level->door_wall_list_offsets = NULL;
     level->door_wall_list_owned = false;
     level->num_doors = 0;
+    if (level->lift_wall_list_owned) {
+        free(level->lift_wall_list);
+        free(level->lift_wall_list_offsets);
+    }
+    level->lift_wall_list = NULL;
+    level->lift_wall_list_offsets = NULL;
+    level->lift_wall_list_owned = false;
+    level->num_lifts = 0;
     if (level->switch_data_owned && level->switch_data) {
         free(level->switch_data);
     }

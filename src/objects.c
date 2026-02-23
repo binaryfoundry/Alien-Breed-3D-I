@@ -13,6 +13,7 @@
 #include "objects.h"
 #include "ai.h"
 #include "game_data.h"
+#include "game_types.h"
 #include "level.h"
 #include "movement.h"
 #include "math_tables.h"
@@ -20,6 +21,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+
+#define LIFT_ENTRY_SIZE 20
 
 /* Big-endian read/write helpers (Amiga data is big-endian) */
 static inline int16_t be16(const uint8_t *p) {
@@ -377,6 +380,35 @@ void objects_update(GameState *state)
     /* 3. Level mechanics */
     switch_routine(state);
     door_routine(state);
+
+    /* Set stood_on_lift from current zone and Y (same frame: use zone floor from previous frame). */
+    if (state->level.lift_data && state->level.zone_adds && state->level.data) {
+        for (int p = 0; p < 2; p++) {
+            PlayerState *plr = (p == 0) ? &state->plr1 : &state->plr2;
+            plr->stood_on_lift = 0;
+            int16_t zid = plr->zone;
+            if (zid < 0 || zid >= state->level.num_zones) continue;
+            int32_t zone_off = (int32_t)be32(state->level.zone_adds + (uint32_t)zid * 4u);
+            if (zone_off < 0) continue;
+            const uint8_t *zd = state->level.data + zone_off;
+            int32_t zone_floor = be32(zd + ZONE_OFF_FLOOR);
+            int32_t floor_y = zone_floor - plr->s_height;
+            int32_t tol = 512;
+            if (plr->s_yoff >= floor_y - tol && plr->s_yoff <= floor_y + tol) {
+                const uint8_t *lift = state->level.lift_data;
+                while (1) {
+                    int16_t lz = be16(lift);
+                    if (lz < 0) break;
+                    if (lz == zid) {
+                        plr->stood_on_lift = 1;
+                        break;
+                    }
+                    lift += LIFT_ENTRY_SIZE;
+                }
+            }
+        }
+    }
+
     lift_routine(state);
 
     /* Water animations */
@@ -1345,6 +1377,11 @@ void lift_routine(GameState *state)
     if (!state->level.lift_data) return;
 
     uint8_t *lift = state->level.lift_data;
+    int lift_idx = 0;
+    /* Per-zone max floor (multiple lifts in same zone: platform = highest position, like doors with min roof). */
+    int32_t zone_max_floor[256];
+    uint8_t zone_lift_seen[256];
+    memset(zone_lift_seen, 0, sizeof(zone_lift_seen));
 
     /* Iterate lift entries (terminated by -1) */
     while (1) {
@@ -1359,77 +1396,65 @@ void lift_routine(GameState *state)
 
         bool should_move = false;
 
-        switch (lift_type) {
-        case 0: /* Moves on player space key */
-            if (state->plr1.p_spctap && state->plr1.stood_on_lift) {
-                should_move = true;
-            }
-            if (state->plr2.p_spctap && state->plr2.stood_on_lift) {
-                should_move = true;
-            }
-            break;
-        case 1: /* Moves if no player on lift */
-            if (!state->plr1.stood_on_lift && !state->plr2.stood_on_lift) {
-                should_move = true;
-            }
-            break;
-        case 2: /* Always moves */
-            should_move = true;
-            break;
-        case 3: /* Never moves */
-            break;
-        case 4: /* Moves when condition bit set (same bits as door type 1: 0x900) */
-            if (game_conditions & 0x900) should_move = true;
-            break;
-        case 5: /* Moves when condition bit set (same as door type 2: 0x400) */
-            if (game_conditions & 0x400) should_move = true;
-            break;
-        case 6: /* Moves when condition bit set (same as door type 3: 0x200) */
-            if (game_conditions & 0x200) should_move = true;
-            break;
-        }
-
-        /* Animate lift */
-        if (should_move || lift_vel != 0) {
-            if (lift_vel == 0) {
-                /* Start moving (toggle direction) */
-                if (lift_pos <= lift_top) {
-                    lift_vel = 4; /* Down */
-                } else {
-                    lift_vel = -4; /* Up */
-                }
-            }
-
-            lift_pos += (int32_t)lift_vel * state->temp_frames * 256;
-
-            /* Clamp */
-            if (lift_pos <= lift_top) {
-                lift_pos = lift_top;
-                lift_vel = 0;
-            }
+        /* TEMPORARY: Loop all lifts bot -> top -> bot for testing. REMOVE THIS BLOCK and restore
+         * the original should_move / lift_vel logic below when lift texturing is fixed. */
+        {
+            const int32_t up_speed = 4, down_speed = -4;
             if (lift_pos >= lift_bot) {
-                lift_pos = lift_bot;
-                lift_vel = 0;
+                lift_vel = down_speed;  /* at top: go down toward lift_top */
+            } else if (lift_pos <= lift_top) {
+                lift_vel = up_speed;    /* at bottom: go up toward lift_bot */
             }
+            lift_pos += (int32_t)lift_vel * state->temp_frames * 256;
+            /* Clamp to [lift_top, lift_bot] so fully up/down never overshoot */
+            if (lift_pos < lift_top) lift_pos = lift_top;
+            if (lift_pos > lift_bot) lift_pos = lift_bot;
+            if (lift_pos == lift_top || lift_pos == lift_bot) lift_vel = 0;
         }
+        /* END TEMPORARY lift loop - restore original logic (space key / condition / etc.) here. */
 
         wbe32(lift + 4, lift_pos);
         wbe16(lift + 8, lift_vel);
 
-        /* Update zone floor: write lift position directly (same as Amiga). */
-        if (zone_id >= 0 && zone_id < state->level.num_zones)
-            level_set_zone_floor(&state->level, zone_id, lift_pos);
-
-        /* Adjust player Y if standing on this lift */
-        if (state->plr1.stood_on_lift && state->plr1.zone == zone_id) {
-            state->plr1.s_tyoff = lift_pos - state->plr1.s_height;
+        /* Amiga-style: patch floor line 14 and graphics wall record for each lift wall (mirror door_routine). */
+        if (state->level.lift_wall_list && state->level.lift_wall_list_offsets &&
+            state->level.graphics && lift_idx < state->level.num_lifts) {
+            uint32_t start = state->level.lift_wall_list_offsets[lift_idx];
+            uint32_t end   = state->level.lift_wall_list_offsets[lift_idx + 1];
+            for (uint32_t j = start; j < end; j++) {
+                const uint8_t *ent = state->level.lift_wall_list + j * 6u;
+                int16_t fline = be16(ent);
+                int32_t gfx_off = (int32_t)be32(ent + 2);
+                if (state->level.floor_lines && fline >= 0 && (int32_t)fline < state->level.num_floor_lines) {
+                    uint8_t *fl = state->level.floor_lines + (uint32_t)(int16_t)fline * 16u;
+                    wbe16(fl + 14, (int16_t)(uint16_t)0x8000);  /* lift wall flag: no collision (same as door) */
+                }
+                if (gfx_off >= 0) {
+                    uint8_t *wall_rec = state->level.graphics + (uint32_t)gfx_off;
+                    wbe32(wall_rec + 24, lift_pos);   /* lift floor height for this wall */
+                    int16_t yoff = (int16_t)((uint16_t)((-(lift_pos >> 7)) & 0xFFu));
+                    wbe32(wall_rec + 10, yoff);
+                }
+            }
         }
-        if (state->plr2.stood_on_lift && state->plr2.zone == zone_id) {
-            state->plr2.s_tyoff = lift_pos - state->plr2.s_height;
-        }
 
-        lift += 20;
+        lift_idx++;
+        lift += LIFT_ENTRY_SIZE;
     }
+
+    /* Apply zone floors once per zone (scale already *256 in lift data). */
+    for (int z = 0; z < state->level.num_zones && z < 256; z++) {
+        if (zone_lift_seen[z])
+            level_set_zone_floor(&state->level, (int16_t)z, zone_max_floor[z]);
+    }
+
+    /* Adjust player Y when standing on a lift (use applied zone floor). */
+    if (state->plr1.stood_on_lift && state->plr1.zone >= 0 && state->plr1.zone < 256 &&
+        zone_lift_seen[state->plr1.zone])
+        state->plr1.s_tyoff = zone_max_floor[state->plr1.zone] - state->plr1.s_height;
+    if (state->plr2.stood_on_lift && state->plr2.zone >= 0 && state->plr2.zone < 256 &&
+        zone_lift_seen[state->plr2.zone])
+        state->plr2.s_tyoff = zone_max_floor[state->plr2.zone] - state->plr2.s_height;
 }
 
 /* -----------------------------------------------------------------------

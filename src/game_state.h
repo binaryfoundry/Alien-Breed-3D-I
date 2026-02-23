@@ -160,6 +160,12 @@ typedef struct {
     uint32_t        *door_wall_list_offsets; /* [num_doors+1]: start index per door (offsets[i+1]-offsets[i] = count) */
     int              num_doors;            /* number of door entries in door_data */
 
+    /* Amiga lift wall list: same layout as door (fline + gfx_off). lift_routine patches floor line 14 and graphics. */
+    uint8_t         *lift_wall_list;
+    uint32_t        *lift_wall_list_offsets; /* [num_lifts+1] */
+    int              num_lifts;
+    bool             lift_wall_list_owned;
+
     /* When true, zone data words (e.g. brightness at ZONE_OFF_BRIGHTNESS) are little-endian in level->data */
     bool zone_brightness_le;
 

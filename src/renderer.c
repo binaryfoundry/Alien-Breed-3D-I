@@ -1833,8 +1833,8 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
  * Object entry (2 bytes after type word):
  *   +0: draw_mode (word) - 0=before water, 1=after water, 2=full room
  * ----------------------------------------------------------------------- */
-#define MAX_DOOR_ENTRIES 64
-#define MAX_LIFT_ENTRIES 64
+#define MAX_DOOR_ENTRIES 256
+#define MAX_LIFT_ENTRIES 256
 #define LIFT_ENTRY_SIZE  20
 
 static int zone_has_door(const uint8_t *door_data, int16_t zone_id)
@@ -1907,6 +1907,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
     int half_h = g_renderer.height / 2;
 
     int zone_has_door_flag = zone_has_door(level->door_data, zone_id);
+    int zone_has_lift_flag = zone_has_lift(level->lift_data, zone_id);
 
     /* Read zone number from graphics data (consumed before polyloop) */
     const uint8_t *ptr = gfx_data;
@@ -1984,12 +1985,11 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 /* Original level height for texture step (before any door override). */
                 int16_t wall_height_for_tex = (int16_t)((botwall - topwall) >> 8);
                 if (wall_height_for_tex < 1) wall_height_for_tex = 1;
-                /* Door override: clip wall to door opening and add V tex offset. Skip switch walls
+                /* Door/lift override: clip wall to door opening or lift shaft and add V tex offset. Skip switch walls
                  * (tex_id 11) so their Y texcoords stay correct; they are panels, not full-height doors.
-                 * Re-read zone roof from level->data here so we see door_routine's updates (doors/lifts
-                 * write ZD_ROOF each frame; this is the same buffer we read from at zone start). */
+                 * Re-read zone roof/floor from level->data here so we see door_routine/lift_routine updates. */
                 int32_t door_yoff_add = 0;
-                if (zone_has_door_flag && tex_id != SWITCHES_WALL_TEX_ID) {
+                if ((zone_has_door_flag || zone_has_lift_flag) && tex_id != SWITCHES_WALL_TEX_ID) {
                     int32_t live_zone_roof = rd32(zone_data + 6);   /* ZD_ROOF: door/lift write this */
                     int32_t live_zone_floor = rd32(zone_data + 2);   /* ZD_FLOOR */
                     int32_t zone_roof_rel = live_zone_roof - y_off;
