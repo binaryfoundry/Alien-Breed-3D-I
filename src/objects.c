@@ -175,8 +175,37 @@ static void enemy_wander(GameObject *obj, const EnemyParams *params,
     ctx.extlen = params->extlen;
     ctx.awayfromwall = params->awayfromwall;
     ctx.collide_flags = 0x3F7C1; /* standard enemy collision mask */
+    ctx.stood_in_top = obj->obj.in_top;
+    /* Set objroom from current zone so move_object uses zone-based collision and updates zone on transition */
+    if (OBJ_ZONE(obj) >= 0 && state->level.zone_adds && state->level.data &&
+        OBJ_ZONE(obj) < state->level.num_zones) {
+        int32_t zo = (int32_t)be32(state->level.zone_adds + (uint32_t)OBJ_ZONE(obj) * 4u);
+        ctx.objroom = (uint8_t *)(state->level.data + zo);
+    }
 
     move_object(&ctx, &state->level);
+
+    /* Update position and zone after move */
+    if (state->level.object_points) {
+        uint8_t *pts = state->level.object_points + idx * 8;
+        obj_sw(pts, (int16_t)ctx.newx);
+        obj_sw(pts + 4, (int16_t)ctx.newz);
+    }
+    if (ctx.objroom && state->level.data) {
+        int16_t new_zone = (int16_t)((ctx.objroom[0] << 8) | ctx.objroom[1]);
+        if (new_zone >= 0 && new_zone < state->level.num_zones) {
+            OBJ_SET_ZONE(obj, new_zone);
+        } else {
+            int32_t roompt = (int32_t)(ctx.objroom - state->level.data);
+            for (int16_t z = 0; z < state->level.num_zones; z++) {
+                if ((int32_t)be32(state->level.zone_adds + (uint32_t)z * 4u) == roompt) {
+                    OBJ_SET_ZONE(obj, z);
+                    break;
+                }
+            }
+        }
+        obj->obj.in_top = ctx.stood_in_top;
+    }
 
     /* If hit wall, reverse direction */
     if (ctx.hitwall) {
@@ -220,12 +249,41 @@ static void enemy_attack(GameObject *obj, const EnemyParams *params,
     ctx.step_down_val = params->step_down;
     ctx.extlen = params->extlen;
     ctx.awayfromwall = params->awayfromwall;
+    ctx.stood_in_top = obj->obj.in_top;
+    /* Set objroom from current zone so move_object uses zone-based collision and updates zone on transition */
+    if (OBJ_ZONE(obj) >= 0 && state->level.zone_adds && state->level.data &&
+        OBJ_ZONE(obj) < state->level.num_zones) {
+        int32_t zo = (int32_t)be32(state->level.zone_adds + (uint32_t)OBJ_ZONE(obj) * 4u);
+        ctx.objroom = (uint8_t *)(state->level.data + zo);
+    }
 
     head_towards_angle(&ctx, &facing, target_x, target_z,
                        speed * state->temp_frames, 120);
     NASTY_SET_FACING(*obj, facing);
 
     move_object(&ctx, &state->level);
+
+    /* Update position and zone after move */
+    if (state->level.object_points) {
+        uint8_t *pts = state->level.object_points + idx * 8;
+        obj_sw(pts, (int16_t)ctx.newx);
+        obj_sw(pts + 4, (int16_t)ctx.newz);
+    }
+    if (ctx.objroom && state->level.data) {
+        int16_t new_zone = (int16_t)((ctx.objroom[0] << 8) | ctx.objroom[1]);
+        if (new_zone >= 0 && new_zone < state->level.num_zones) {
+            OBJ_SET_ZONE(obj, new_zone);
+        } else {
+            int32_t roompt = (int32_t)(ctx.objroom - state->level.data);
+            for (int16_t z = 0; z < state->level.num_zones; z++) {
+                if ((int32_t)be32(state->level.zone_adds + (uint32_t)z * 4u) == roompt) {
+                    OBJ_SET_ZONE(obj, z);
+                    break;
+                }
+            }
+        }
+        obj->obj.in_top = ctx.stood_in_top;
+    }
 
     /* Ranged attack */
     if (params->shot_type >= 0 && dist > params->melee_range) {
@@ -986,6 +1044,12 @@ void object_handle_bullet(GameObject *obj, GameState *state)
     ctx.wallbounce = (int8_t)(flags & 1);
     ctx.stood_in_top = obj->obj.in_top;
     ctx.wall_flags = 0x0400;
+    /* Set objroom from bullet's current zone so move_object uses zone-based collision and updates zone on transition */
+    if (OBJ_ZONE(obj) >= 0 && state->level.zone_adds && state->level.data &&
+        OBJ_ZONE(obj) < state->level.num_zones) {
+        int32_t zo = (int32_t)be32(state->level.zone_adds + (uint32_t)OBJ_ZONE(obj) * 4u);
+        ctx.objroom = (uint8_t *)(state->level.data + zo);
+    }
 
     if (new_bx != bx || new_bz != bz) {
         move_object(&ctx, &state->level);
@@ -1039,9 +1103,20 @@ void object_handle_bullet(GameObject *obj, GameState *state)
         obj_sw(pts + 4, (int16_t)ctx.newz);
     }
 
-    /* Update zone from room */
-    if (ctx.objroom) {
-        OBJ_SET_ZONE(obj, (int16_t)((ctx.objroom[0] << 8) | ctx.objroom[1]));
+    /* Update zone from room (zone word at offset 0; fallback derive from roompt if invalid) */
+    if (ctx.objroom && state->level.data) {
+        int16_t new_zone = (int16_t)((ctx.objroom[0] << 8) | ctx.objroom[1]);
+        if (new_zone >= 0 && new_zone < state->level.num_zones) {
+            OBJ_SET_ZONE(obj, new_zone);
+        } else if (state->level.zone_adds) {
+            int32_t roompt = (int32_t)(ctx.objroom - state->level.data);
+            for (int16_t z = 0; z < state->level.num_zones; z++) {
+                if ((int32_t)be32(state->level.zone_adds + (uint32_t)z * 4u) == roompt) {
+                    OBJ_SET_ZONE(obj, z);
+                    break;
+                }
+            }
+        }
     }
 
     /* ---- Object-to-object hit detection (Anims.s lines 3202-3382) ---- */
