@@ -1355,8 +1355,17 @@ void door_routine(GameState *state)
                 }
                 if (gfx_off >= 0) {
                     uint8_t *wall_rec = state->level.graphics + (uint32_t)gfx_off;
+                    uint8_t valshift = wall_rec[15];
+                    uint8_t valand = wall_rec[14];
+                    int shift = 0; // TODO: fix this properly
+                    if (valshift == 8) shift = 7;
+                    if (valshift == 6) shift = 8;
+                    if (valshift == 4) shift = 9;
+                    if (valshift == 2) shift = 10;
+                    if (valshift == 1) shift = 11;
+                    if (valshift == 0) shift = 12;
                     wbe32(wall_rec + 24, door_pos);   /* Amiga: move.l d3,24(a1) = door height for this wall */
-                    int16_t yoff = (int16_t)((uint16_t)((-(door_pos >> 7)) & 0xFFu));
+                    int16_t yoff = (int16_t)((uint16_t)((-(door_pos >> shift)) & 0xFFu));
                     wbe32(wall_rec + 10, yoff);
                 }
             }
