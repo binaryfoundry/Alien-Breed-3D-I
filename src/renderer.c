@@ -1925,7 +1925,6 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
 
     /* Amiga: draw walls and arcs in stream order (no deferral). */
     /* Water: append to global s_deferred_water (drawn after all zones, depth-sorted). */
-    int objects_drawn_this_zone = 0;
 
     int max_iter = 500; /* Safety limit */
 
@@ -2330,10 +2329,14 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
 
         case 4: /* Object (sprite) */
         {
-            /* ObjDraw: type-4 marks that this zone has objects. We draw them after the zone
-             * stream (floors, walls, arcs in stream order) so sprites are on top. */
+            /* Amiga: ObjDraw is called when type-4 is encountered (stream order). Word selects
+             * beforewat/afterwat/fullroom for ty3d/by3d; we use zone_roof/zone_floor. */
+            int16_t obj_clip_mode = rd16(ptr);
             ptr += 2;
-            objects_drawn_this_zone = 1;
+            (void)obj_clip_mode; /* TODO: use for BEFOREWAT/AFTERWAT vertical clip when needed */
+            int is_multi_floor = (rd32(level->zone_graph_adds + zone_id * 8 + 4) != 0);
+            draw_zone_objects(state, zone_id, zone_roof, zone_floor,
+                             is_multi_floor ? use_upper : -1);
             break;
         }
 
@@ -2468,12 +2471,6 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
             break;
         }
     }
-
-    /* Draw billboards last in the zone: after all floors, roofs, and walls. They are drawn on top. */
-    {
-        int is_multi_floor = (rd32(level->zone_graph_adds + zone_id * 8 + 4) != 0);
-        draw_zone_objects(state, zone_id, zone_roof, zone_floor, is_multi_floor ? use_upper : -1);
-    }
 }
 
 /* -----------------------------------------------------------------------
@@ -2550,9 +2547,8 @@ void renderer_draw_display(GameState *state)
      * so far zones are drawn first, near zones overwrite (painter's).
      *
      * Within each zone (AB3DI.s polyloop / DoThisRoom): strict stream order.
-     * Each primitive is drawn as it appears (wall, floor, roof, arc, etc.);
-     * no deferral. Level data order determines draw order (e.g. door ceiling
-     * after door sides). Objects are drawn last so sprites are on top.
+     * Each primitive is drawn as it appears (wall, floor, roof, arc, type-4 objects, etc.);
+     * no deferral. Objects are drawn when the type-4 entry is encountered (Amiga ObjDraw).
      *
      * For each zone: apply LEVELCLIPS, then renderer_draw_zone (stream parse + draw).
      */
