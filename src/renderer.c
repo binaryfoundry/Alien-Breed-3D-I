@@ -685,30 +685,8 @@ static void draw_wall_column(int x, int y_top, int y_bot,
         g_renderer.clip.z[x] = col_z;
     }
 }
-/* -----------------------------------------------------------------------
- * Deferred walls: Amiga stream order, painter's only.
- *
- * Type 0/13 (wall) and type 5 (arc) append to deferred[] in stream order.
- * After the zone stream is parsed, we draw deferred walls in that same order
- * (no depth sort). Floors/roofs were already drawn as we parsed. Then objects.
- * Level compiler arranges the stream so draw order is correct.
- * ----------------------------------------------------------------------- */
-#define MAX_DEFERRED_WALLS 256
 /* Reference Z used to project two-level zone split height to screen Y (same scale as orp->z). */
 #define TWO_LEVEL_SPLIT_REF_Z 400
-typedef struct {
-    int16_t  x1, z1, x2, z2;
-    int16_t  top, bot;
-    const uint8_t *texture;
-    int16_t  tex_start, tex_end;
-    int16_t  brightness;
-    uint8_t  valand, valshift;
-    int16_t  horand;
-    int16_t  tex_id;    /* for cur_wall_pal when drawing */
-    int16_t  totalyoff; /* vertical texture offset */
-    int16_t  fromtile;  /* horizontal texture offset (strip base) */
-    int16_t  wall_height_for_tex; /* original level height for texture step (not overridden for doors) */
-} DeferredWall;
 
 /* Deferred water spans: draw after ALL zones' opaque geometry (global list, depth-sorted). */
 #define MAX_DEFERRED_WATER_SPANS 4096
@@ -1945,11 +1923,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
     }
 
 
-    /* Deferred walls: collect during stream parsing, draw AFTER floors/ceilings.
-     * This ensures floors draw on the black framebuffer first, then walls
-     * overwrite on top (matching Amiga behaviour). Stream order is preserved. */
-    DeferredWall deferred[MAX_DEFERRED_WALLS];
-    int num_deferred = 0;
+    /* Amiga: draw walls and arcs in stream order (no deferral). */
     /* Water: append to global s_deferred_water (drawn after all zones, depth-sorted). */
     int objects_drawn_this_zone = 0;
 
@@ -1966,10 +1940,8 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
         case 13: /* See-through wall */
         {
             /* Wall entry: 28 bytes of data
-             * Translated from WallRoutine3.ChipMem.s itsawalldraw (line 1761)
-             *
-             * Walls are deferred and drawn after all floor/ceiling entries
-             * so that floors can draw on the black framebuffer first. */
+             * Translated from WallRoutine3.ChipMem.s itsawalldraw (line 1761).
+             * Amiga: draw immediately in stream order (polyloop calls itsawalldraw per wall). */
             int16_t p1       = rd16(ptr + 0);   /* point1 index */
             int16_t p2       = rd16(ptr + 2);   /* point2 index */
             int16_t leftend  = rd16(ptr + 4);   /* strip start */
@@ -1989,9 +1961,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
             botwall -= y_off;
 
             int16_t tex_id = rd16(ptr + 12);
-            /* Switch walls: use p1 as point index; bit 1 of first word = on/off for texture only */
-            if (p1 >= 0 && p1 < MAX_POINTS && p2 >= 0 && p2 < MAX_POINTS &&
-                num_deferred < MAX_DEFERRED_WALLS)
+            if (p1 >= 0 && p1 < MAX_POINTS && p2 >= 0 && p2 < MAX_POINTS)
             {
                 int16_t rx1 = (int16_t)(r->rotated[p1].x >> 7);
                 int16_t rz1 = (int16_t)r->rotated[p1].z;
@@ -2049,21 +2019,16 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 if (tex_id == SWITCHES_WALL_TEX_ID && (p1 & 2))
                     eff_fromtile = (int16_t)(fromtile + 32);
 
-                DeferredWall *dw = &deferred[num_deferred++];
-                dw->x1 = rx1; dw->z1 = rz1; dw->x2 = rx2; dw->z2 = rz2;
-                dw->top        = wall_top;
-                dw->bot        = wall_bot;
-                dw->wall_height_for_tex = wall_height_for_tex;
-                dw->texture    = wall_tex;
-                dw->tex_start  = leftend;
-                dw->tex_end    = rightend;
-                dw->brightness = wall_bright;
-                dw->valand     = use_valand;
-                dw->valshift   = use_valshift;
-                dw->horand     = horand;
-                dw->tex_id     = tex_id;
-                dw->totalyoff  = eff_totalyoff;
-                dw->fromtile   = eff_fromtile;
+                if (tex_id >= 0 && tex_id < MAX_WALL_TILES)
+                    r->cur_wall_pal = r->wall_palettes[tex_id];
+                else
+                    r->cur_wall_pal = NULL;
+                renderer_draw_wall(rx1, rz1, rx2, rz2,
+                                  wall_top, wall_bot,
+                                  wall_tex, leftend, rightend,
+                                  wall_bright, use_valand, use_valshift, horand,
+                                  eff_totalyoff, eff_fromtile, tex_id,
+                                  wall_height_for_tex);
             }
             ptr += 28;
             break;
@@ -2365,8 +2330,8 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
 
         case 4: /* Object (sprite) */
         {
-            /* ObjDraw: type-4 marks that this zone has objects. We draw them after all
-             * deferred walls so sprites are in front of walls (same zone, back-to-front by zone). */
+            /* ObjDraw: type-4 marks that this zone has objects. We draw them after the zone
+             * stream (floors, walls, arcs in stream order) so sprites are on top. */
             ptr += 2;
             objects_drawn_this_zone = 1;
             break;
@@ -2456,27 +2421,20 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                     int32_t new_z = cz + rz;
                     int32_t new_t = bmp_start + ((bmp_end - bmp_start) * seg / num_segments);
                     
-                    /* Draw wall segment if we have room */
-                    if (num_deferred < MAX_DEFERRED_WALLS && new_z > 0 && prev_z > 0) {
-                        DeferredWall *dw = &deferred[num_deferred++];
-                        dw->x1 = (int16_t)prev_x;
-                        dw->z1 = (int16_t)prev_z;
-                        dw->x2 = (int16_t)new_x;
-                        dw->z2 = (int16_t)new_z;
-                        dw->top = (int16_t)(topwall >> 8);
-                        dw->bot = (int16_t)(botwall >> 8);
-                        dw->texture = arc_tex;
-                        dw->tex_start = (int16_t)prev_t;
-                        dw->tex_end = (int16_t)new_t;
-                        dw->brightness = base_bright;
-                        dw->valand = 63;    /* Default */
-                        dw->valshift = 6;   /* Default */
-                        dw->horand = 255;   /* Default */
-                        dw->tex_id = tex_id;
-                        dw->totalyoff = 0;
-                        dw->fromtile = 0;
-                        dw->wall_height_for_tex = (int16_t)((botwall - topwall) >> 8);
-                        if (dw->wall_height_for_tex < 1) dw->wall_height_for_tex = 1;
+                    /* Amiga stream order: draw arc segment immediately */
+                    if (new_z > 0 && prev_z > 0) {
+                        int16_t wall_ht = (int16_t)((botwall - topwall) >> 8);
+                        if (wall_ht < 1) wall_ht = 1;
+                        if (tex_id >= 0 && tex_id < MAX_WALL_TILES)
+                            r->cur_wall_pal = r->wall_palettes[tex_id];
+                        else
+                            r->cur_wall_pal = NULL;
+                        renderer_draw_wall((int16_t)prev_x, (int16_t)prev_z,
+                                          (int16_t)new_x, (int16_t)new_z,
+                                          (int16_t)(topwall >> 8), (int16_t)(botwall >> 8),
+                                          arc_tex, (int16_t)prev_t, (int16_t)new_t,
+                                          base_bright, 63, 6, 255,
+                                          0, 0, tex_id, wall_ht);
                     }
                     
                     prev_x = new_x;
@@ -2509,35 +2467,6 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
             /* Unknown type - skip nothing (type word already consumed) */
             break;
         }
-    }
-
-    /* Sort deferred walls by midpoint depth (z1+z2) descending so we draw far walls first.
-     * Then the last wall drawn in each column is the frontmost, so clip.z is correct for sprites. */
-    for (int i = 1; i < num_deferred; i++) {
-        DeferredWall w = deferred[i];
-        int32_t w_depth = (int32_t)w.z1 + (int32_t)w.z2;
-        int j = i - 1;
-        while (j >= 0 && (int32_t)deferred[j].z1 + (int32_t)deferred[j].z2 < w_depth) {
-            deferred[j + 1] = deferred[j];
-            j--;
-        }
-        deferred[j + 1] = w;
-    }
-
-    /* Draw walls and arcs back-to-front (far first). */
-    for (int i = 0; i < num_deferred; i++) {
-        DeferredWall *dw = &deferred[i];
-        if (dw->tex_id >= 0 && dw->tex_id < MAX_WALL_TILES) {
-            r->cur_wall_pal = r->wall_palettes[dw->tex_id];
-        } else {
-            r->cur_wall_pal = NULL;
-        }
-        renderer_draw_wall(dw->x1, dw->z1, dw->x2, dw->z2,
-                          dw->top, dw->bot,
-                          dw->texture, dw->tex_start, dw->tex_end,
-                          dw->brightness, dw->valand, dw->valshift, dw->horand,
-                          dw->totalyoff, dw->fromtile, dw->tex_id,
-                          dw->wall_height_for_tex);
     }
 
     /* Draw billboards last in the zone: after all floors, roofs, and walls. They are drawn on top. */
@@ -2621,10 +2550,9 @@ void renderer_draw_display(GameState *state)
      * so far zones are drawn first, near zones overwrite (painter's).
      *
      * Within each zone (AB3DI.s polyloop / DoThisRoom): strict stream order.
-     * Floors/roofs/water are drawn as they appear in the graphics stream.
-     * Walls (and arc segments) are deferred, then drawn in the same stream order
-     * after all floor/ceiling entries so floors sit behind walls. Objects are
-     * drawn last so sprites are on top. No depth sort; level compiler arranges order.
+     * Each primitive is drawn as it appears (wall, floor, roof, arc, etc.);
+     * no deferral. Level data order determines draw order (e.g. door ceiling
+     * after door sides). Objects are drawn last so sprites are on top.
      *
      * For each zone: apply LEVELCLIPS, then renderer_draw_zone (stream parse + draw).
      */
