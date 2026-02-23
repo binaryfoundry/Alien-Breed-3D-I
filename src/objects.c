@@ -1172,6 +1172,7 @@ static bool player_at_door_zone(GameState *state, int16_t door_zone_id, int16_t 
     return false;
 }
 
+int  k =0;
 /* -----------------------------------------------------------------------
  * Door routine
  *
@@ -1246,6 +1247,8 @@ void door_routine(GameState *state)
                 if (gfx_off >= 0) {
                     uint8_t *wall_rec = state->level.graphics + (uint32_t)gfx_off;
                     wbe32(wall_rec + 24, door_pos);   /* Amiga: move.l d3,24(a1) = door height for this wall */
+                    int16_t yoff = (int16_t)((uint16_t)((-(door_pos >> 7)) & 0xFFu));
+                    wbe32(wall_rec + 10, yoff);
                 }
             }
         }
