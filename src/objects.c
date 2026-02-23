@@ -1217,8 +1217,10 @@ void door_routine(GameState *state)
                 door_vel = close_speed; /* at open: close toward bot */
             }
             door_pos += (int32_t)door_vel * state->temp_frames * 64;
-            if (door_pos <= door_top) { door_pos = door_top; door_vel = 0; }
-            if (door_pos >= door_bot) { door_pos = door_bot; door_vel = 0; }
+            /* Clamp to [door_top, door_bot] so fully open/closed never overshoot */
+            if (door_pos < door_top) door_pos = door_top;
+            if (door_pos > door_bot) door_pos = door_bot;
+            if (door_pos == door_top || door_pos == door_bot) door_vel = 0;
         }
         /* END TEMPORARY door loop - restore original logic (switch/player open, timer close) here. */
 
