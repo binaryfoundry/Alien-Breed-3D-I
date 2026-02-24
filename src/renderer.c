@@ -37,30 +37,7 @@
 #include <stdio.h>
 #include <limits.h>
 
-/* Default world width/height per sprite graphic (vect_num), not object type.
- * So we size by which graphic we draw: barrel graphic (vect 7) always gets barrel size, etc.
- * Values from Amiga .s where type sets move.w #...,6(a0); reduced slightly for other aliens so they don’t look oversized. */
-static const struct { int w; int h; } sprite_world_size_by_vect[MAX_SPRITE_TYPES] = {
-    /*  0 alien       */ { 32,  32 },
-    /*  1 pickups     */ { 40,  40 },   /* medikit, health (ammo overridden to 16×16 below) */
-    /*  2 bigbullet   */ { 16,  16 },
-    /*  3 (unused)    */ { 32,  32 },
-    /*  4 flying      */ { 96,  96 },   /* FlyingScalyBall.s #$6060 */
-    /*  5 keys        */ { 20,  20 },
-    /*  6 rockets     */ { 20,  20 }, /* ammo pickup */
-    /*  7 barrel      */ { 48,  50 },
-    /*  8 explosion   */ { 64,  64 },
-    /*  9 guns        */ { 40,  40 },
-    /* 10 marine      */ { 32,  32 },   /* Robot.s #$2020; MutantMarine vect 10 */
-    /* 11 bigalien    */ { 80,  80 },   /* BigUglyAlien / BIGSCARYALIEN */
-    /* 12 lamps       */ { 40,  40 },
-    /* 13 worm        */ { 90, 100 },   /* HalfWorm.s #90*256+100 */
-    /* 14 bigclaws    */ {128, 128},   /* BigClaws.s #$8080 */
-    /* 15 tree        */ {128, 128},   /* Tree.s #128*256+128; small red same vect */
-    /* 16 tough marine*/ { 69,  69 }, /* ToughMarine.s #$4545 */
-    /* 17 flame marine*/ { 69,  69 }, /* FlameMarine.s #$4545 */
-    /* 18,19         */ { 32,  32 }, { 32,  32 },
-};
+/* World size from obj[6]/obj[7] per object (Amiga style). */
 
 /* Per-sprite "feet" anchor: source rows from bottom of graphic to the feet row.
  * 0 = feet at bottom of image (default). If the art has empty space below the feet,
@@ -1692,19 +1669,13 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         }
         if (vect_num < 0 || vect_num >= MAX_SPRITE_TYPES) continue;
 
-        /* World size from table by vect_num. Ammo pickup often uses vect 1 (pickups) from level
-         * data, so use a smaller size when we know it's ammo to avoid huge ammo sprites.
-         * Medikit (vect 1) is drawn at half size. */
-        int v = vect_num;
-        int world_w = sprite_world_size_by_vect[v].w;
-        int world_h = sprite_world_size_by_vect[v].h;
-        if (v == 1 && obj_number == OBJ_NBR_AMMO) {
-            world_w = 16;
-            world_h = 16;
-        } else if (v == 1 && obj_number == OBJ_NBR_MEDIKIT) {
-            world_w /= 2;
-            world_h /= 2;
-        }
+        /* World size from object record (Amiga: each type sets move.w #...,6(a0); obj[6]=width, obj[7]=height). */
+        int world_w = (int)obj[6];
+        int world_h = (int)(int8_t)obj[7];
+        if (world_w <= 0) world_w = 32;
+        /* For display height use positive value (obj[7] can be negative e.g. barrel -60 for placement). */
+        if (world_h <= 0 && world_h >= -128) world_h = -world_h;
+        if (world_h <= 0) world_h = 32;
 
         /* Screen size: width fixed; height uses proj_y_scale so billboard Y stays consistent when PROJ_Y_SCALE is tuned (position uses same scale). */
         int sprite_w = (int)((int32_t)world_w * SPRITE_SIZE_SCALE / z_for_size) * SPRITE_SIZE_MULTIPLIER;
@@ -1742,7 +1713,7 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         int floor_screen_y = (int)((int64_t)floor_rel * (int64_t)g_renderer.proj_y_scale * (int32_t)RENDER_SCALE / denom) + center_y;
         int half_h = sprite_h / 2;
         /* Per-vect feet anchor: shift sprite down so the feet row (not image bottom) sits on the floor. */
-        int feet_rows = sprite_feet_rows_from_bottom_by_vect[v];
+        int feet_rows = sprite_feet_rows_from_bottom_by_vect[vect_num];
         int feet_offset_px = (src_rows > 0 && feet_rows != 0)
             ? (feet_rows * sprite_h / src_rows) : 0;
         int scr_y = floor_screen_y - half_h + feet_offset_px;

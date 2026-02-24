@@ -273,6 +273,34 @@ const CollisionBox col_box_table[21] = {
 };
 
 /* -----------------------------------------------------------------------
+ * Default world width/height per object type (obj[6], obj[7]).
+ * From Amiga .s: Tree 128*256+128, HalfWorm 90*256+100, FlyingScalyBall #$6060, etc.
+ * ----------------------------------------------------------------------- */
+const ObjectWorldSize default_object_world_size[21] = {
+    /*  0 alien       */ { 32,  32 },
+    /*  1 Medipack    */ { 20,  20 },
+    /*  2 Bullet      */ { 16,  16 },
+    /*  3 Gun         */ { 40,  40 },
+    /*  4 Key         */ { 20,  20 },
+    /*  5 Player1     */ { 40,  40 },
+    /*  6 Robot       */ { 32,  32 },
+    /*  7 Big Nasty   */ { 80,  80 },
+    /*  8 Flying Nasty*/ { 96,  96 },
+    /*  9 Ammo        */ { 16,  16 },
+    /* 10 Barrel      */ { 48,  50 },
+    /* 11 Player2     */ { 40,  40 },
+    /* 12 Mutant Marine */ { 32,  32 },
+    /* 13 Worm        */ { 90, 100 },
+    /* 14 Huge red    */ {128, 128},
+    /* 15 Small red   */ {128, 128},
+    /* 16 Tree        */ {128, 128},
+    /* 17 Eye ball    */ { 16,  32 },
+    /* 18 Tough Marine*/ { 69,  69 },
+    /* 19 Flame Marine*/ { 69,  69 },
+    /* 20 Gas pipe    */ { 40,  60 },
+};
+
+/* -----------------------------------------------------------------------
  * Bullet type data
  * Translated from Anims.s BulletSizes, HitNoises, ExplosiveForce
  * ----------------------------------------------------------------------- */

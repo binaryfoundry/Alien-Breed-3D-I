@@ -24,6 +24,7 @@
 #include "game_loop.h"
 #include "game_data.h"
 #include "level.h"
+#include "objects.h"
 #include "player.h"
 #include "stub_display.h"
 #include "stub_input.h"
@@ -288,6 +289,9 @@ void play_the_game(GameState *state)
     } else {
         printf("[GAME] No level data loaded\n");
     }
+    /* Ensure each object has world size in its record (Amiga style), for file and test levels */
+    if (state->level.object_data && state->level.num_object_points > 0)
+        object_init_world_sizes_from_types(&state->level);
 
     /* ---- Setup control mode from prefs ---- */
     /* Original checks Prefsfile[0] for 'k','m','n','j','p' */

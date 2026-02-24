@@ -56,6 +56,23 @@ int16_t plr2_obj_dists[MAX_OBJECTS];
 static int16_t anim_timer = 2;
 
 /* -----------------------------------------------------------------------
+ * Set world width/height in each object record from type defaults when unset (Amiga: each type sets 6(a0)).
+ * ----------------------------------------------------------------------- */
+void object_init_world_sizes_from_types(LevelState *level)
+{
+    if (!level->object_data || level->num_object_points <= 0) return;
+    for (int i = 0; i < level->num_object_points; i++) {
+        uint8_t *raw = level->object_data + i * OBJECT_SIZE;
+        int t = (int8_t)raw[16];
+        if (t < 0 || t > 20) continue;
+        if (raw[6] == 0 || raw[7] == 0) {
+            raw[6] = (uint8_t)default_object_world_size[t].w;
+            raw[7] = (uint8_t)default_object_world_size[t].h;
+        }
+    }
+}
+
+/* -----------------------------------------------------------------------
  * Object iteration helpers
  * ----------------------------------------------------------------------- */
 static GameObject *get_object(LevelState *level, int index)

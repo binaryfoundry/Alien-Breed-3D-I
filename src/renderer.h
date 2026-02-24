@@ -54,10 +54,10 @@
 #define WORLD_Y_FRAC_BITS  8
 #define WORLD_Y_SUBUNITS   (1 << WORLD_Y_FRAC_BITS)
 
-/* Sprite size: (world * SPRITE_SIZE_SCALE / z) * SPRITE_SIZE_MULTIPLIER. Resolution via RENDER_SCALE.
- * 128 so sprites keep scaling when very close. Multiplier doubles apparent size; set to 1 to disable. */
+/* Sprite size: (world * SPRITE_SIZE_SCALE / z) * SPRITE_SIZE_MULTIPLIER.
+ * Amiga ObjDraw3: (byte<<7)/z = (byte*128)/z; we scale by RENDER_SCALE for resolution. No extra doubling. */
 #define SPRITE_SIZE_SCALE      (128 * RENDER_SCALE)
-#define SPRITE_SIZE_MULTIPLIER 2
+#define SPRITE_SIZE_MULTIPLIER 1
 
 /* -----------------------------------------------------------------------
  * Rotated point arrays

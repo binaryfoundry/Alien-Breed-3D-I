@@ -97,6 +97,14 @@ typedef struct {
 extern const CollisionBox col_box_table[21];
 
 /* -----------------------------------------------------------------------
+ * Default world size (width, height) per object type for display.
+ * Amiga: each type sets move.w #...,6(a0) (word = high byte w, low byte h).
+ * Used to set obj[6]/obj[7] when level data has them as 0.
+ * ----------------------------------------------------------------------- */
+typedef struct { int8_t w; int8_t h; } ObjectWorldSize;
+extern const ObjectWorldSize default_object_world_size[21];
+
+/* -----------------------------------------------------------------------
  * Bullet type data
  * Translated from Anims.s BulletTypes / BulletSizes / ExplosiveForce
  * ----------------------------------------------------------------------- */

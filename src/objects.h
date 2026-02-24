@@ -24,6 +24,12 @@
 void objects_update(GameState *state);
 
 /* -----------------------------------------------------------------------
+ * Set obj[6]/obj[7] (world width/height) from default_object_world_size when
+ * level data has them as 0. Call after level load so each object has size in its record (Amiga style).
+ * ----------------------------------------------------------------------- */
+void object_init_world_sizes_from_types(LevelState *level);
+
+/* -----------------------------------------------------------------------
  * Individual object type handlers
  * Each translates from the corresponding ItsA* function in Anims.s
  * ----------------------------------------------------------------------- */
