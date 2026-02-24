@@ -1645,18 +1645,17 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         }
         if (vect_num < 0 || vect_num >= MAX_SPRITE_TYPES) continue;
 
-        /* World size from object record (Amiga: each type sets move.w #...,6(a0); obj[6]=width, obj[7]=height). */
-        int world_w = (int)obj[6];
+        /* World size from object record (Amiga: move.w #...,6(a0) → byte 6 = width, byte 7 = height; both signed). */
+        int world_w = (int)(int8_t)obj[6];
         int world_h = (int)(int8_t)obj[7];
         if (world_w <= 0) world_w = 32;
         /* For display height use positive value (obj[7] can be negative e.g. barrel -60 for placement). */
         if (world_h <= 0 && world_h >= -128) world_h = -world_h;
         if (world_h <= 0) world_h = 32;
 
-        /* Screen size: width fixed; height uses proj_y_scale so billboard Y stays consistent when PROJ_Y_SCALE is tuned (position uses same scale). */
+        /* Screen size: width from Amiga (byte*128/z)*RENDER_SCALE; height uses proj_y_scale so billboard Y matches floor projection scale. */
         int sprite_w = (int)((int32_t)world_w * SPRITE_SIZE_SCALE / z_for_size) * SPRITE_SIZE_MULTIPLIER;
-        int sprite_h = (int)((int64_t)world_h * (int64_t)g_renderer.proj_y_scale * (int64_t)RENDER_SCALE / z_for_size) * SPRITE_SIZE_MULTIPLIER;
-        if (sprite_w < 1) sprite_w = 1;
+        int sprite_h = (int)((int64_t)world_h * (int64_t)g_renderer.proj_y_scale * (int64_t)RENDER_SCALE / z_for_size) * SPRITE_SIZE_MULTIPLIER;    if (sprite_w < 1) sprite_w = 1;
         if (sprite_h < 1) sprite_h = 1;
 
         /* Source dimensions: columns and rows from object data offsets 14, 15. */
@@ -1681,12 +1680,10 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
             obj_floor = bot_of_room;
         }
         int32_t floor_rel = obj_floor - y_off;
-        /* Match floor polygon/span: screen_y = center + (rel * PROJ_Y_SCALE * RENDER_SCALE) / (z * WORLD_Y_SUBUNITS).
-         * PROJ_Y_SCALE = aspect; RENDER_SCALE = resolution; WORLD_Y_SUBUNITS = world Y fixed-point. No hardcoded constants. */
-        int64_t denom = (int64_t)orp->z * (int64_t)WORLD_Y_SUBUNITS;
-        if (denom < 1) denom = 1;
+        /* Match floor polygon/span exactly: screen_y = center + (rel >> WORLD_Y_FRAC_BITS) * PROJ_Y_SCALE * RENDER_SCALE / z. */
+        int32_t floor_rel_8 = floor_rel >> WORLD_Y_FRAC_BITS;
         int center_y = g_renderer.height / 2;
-        int floor_screen_y = (int)((int64_t)floor_rel * (int64_t)g_renderer.proj_y_scale * (int32_t)RENDER_SCALE / denom) + center_y;
+        int floor_screen_y = (int)((int64_t)floor_rel_8 * (int64_t)g_renderer.proj_y_scale * (int32_t)RENDER_SCALE / (int32_t)orp->z) + center_y;
         int half_h = sprite_h / 2;
 
         /* Look up frame info from FRAMES table (Amiga: 2(a0) indexes frame; frame gives DOWN_STRIP for strip offset). */
@@ -1698,10 +1695,9 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
             ptr_off = ft[frame_num].ptr_off;
             down_strip = ft[frame_num].down_strip;
         }
-        /* Vertical placement: Amiga positions sprite then adds DOWN_STRIP when indexing strip rows.
-         * Convert down_strip (source rows) to screen pixels and shift sprite down so content aligns. */
-        int down_strip_px = (src_rows > 0) ? (int)((int32_t)down_strip * sprite_h / src_rows) : 0;
-        int scr_y = floor_screen_y - (half_h - down_strip_px);
+        /* Place sprite so its bottom row (feet) is at floor_screen_y. Renderer uses center: sy = screen_y - height/2,
+         * so we need center = floor_screen_y - half_h + 1 so that sy + height - 1 == floor_screen_y. */
+        int scr_y = floor_screen_y - half_h + 1;
 
         /* Use dedicated .pal if loaded; no fallback to WAD header because
          * sprite .pal format (15 levels × 32 × 2 bytes = 960) differs from

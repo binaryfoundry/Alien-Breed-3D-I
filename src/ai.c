@@ -142,6 +142,24 @@ int16_t viewpoint_to_draw(int16_t viewer_x, int16_t viewer_z,
     return (rel + 512) / 1024; /* +512 for rounding */
 }
 
+/* Same as ViewpointToDraw but for 16 rotational frames (0-15).
+ * Used by enemies whose sprite tables have 16 directions (e.g. alien, marine). */
+int16_t viewpoint_to_draw_16(int16_t viewer_x, int16_t viewer_z,
+                             int16_t obj_x, int16_t obj_z,
+                             int16_t obj_facing)
+{
+    double dx = (double)(viewer_x - obj_x);
+    double dz = (double)(viewer_z - obj_z);
+    double angle = atan2(-dx, -dz);
+    int16_t view_angle = (int16_t)(angle * (4096.0 / (2.0 * 3.14159265)));
+    view_angle = (view_angle * 2) & ANGLE_MASK;
+    int16_t rel = (view_angle - obj_facing) & ANGLE_MASK;
+    /* 0-15: each frame = 256 units */
+    int16_t frame = (int16_t)((rel * 16) >> 12);
+    if (frame >= 16) frame = 15;
+    return frame;
+}
+
 /* -----------------------------------------------------------------------
  * Helper: get object position from ObjectPoints
  * ----------------------------------------------------------------------- */

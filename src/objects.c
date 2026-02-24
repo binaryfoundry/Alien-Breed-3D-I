@@ -583,6 +583,32 @@ void objects_update(GameState *state)
             break;
         }
 
+        /* Set display frame from viewpoint (camera) relative to enemy facing, so the renderer
+         * gets the correct frame and down_strip. Amiga: ViewpointToDraw in enemy .s files
+         * computes which of 8/16 rotational frames to show based on viewer angle vs facing. */
+        if (NASTY_LIVES(*obj) > 0) {
+            switch (obj_type) {
+            case OBJ_NBR_ALIEN: case OBJ_NBR_ROBOT: case OBJ_NBR_BIG_NASTY:
+            case OBJ_NBR_FLYING_NASTY: case OBJ_NBR_EYEBALL:
+            case OBJ_NBR_MARINE: case OBJ_NBR_TOUGH_MARINE: case OBJ_NBR_FLAME_MARINE:
+            case OBJ_NBR_WORM: case OBJ_NBR_HUGE_RED_THING: case OBJ_NBR_SMALL_RED_THING:
+            case OBJ_NBR_TREE:
+                {
+                    int16_t obj_x, obj_z;
+                    get_object_pos(&state->level, OBJ_CID(obj), &obj_x, &obj_z);
+                    /* Viewer = current player (camera); use plr1 for single-player. */
+                    int16_t view_x = (int16_t)(state->plr1.xoff >> 16);
+                    int16_t view_z = (int16_t)(state->plr1.zoff >> 16);
+                    int16_t facing = NASTY_FACING(*obj);
+                    int16_t frame = viewpoint_to_draw_16(view_x, view_z, obj_x, obj_z, facing);
+                    obj_sw(obj->raw + 10, frame);
+                }
+                break;
+            default:
+                break;
+            }
+        }
+
         obj_index++;
     }
 

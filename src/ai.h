@@ -53,4 +53,9 @@ int16_t viewpoint_to_draw(int16_t viewer_x, int16_t viewer_z,
                           int16_t obj_x, int16_t obj_z,
                           int16_t obj_facing);
 
+/* 16-direction version for sprite types with 16 rotational frames (alien, marine, etc.). */
+int16_t viewpoint_to_draw_16(int16_t viewer_x, int16_t viewer_z,
+                             int16_t obj_x, int16_t obj_z,
+                             int16_t obj_facing);
+
 #endif /* AI_H */
