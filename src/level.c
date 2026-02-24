@@ -39,6 +39,9 @@ static const char *zone_anim_flag_name(unsigned t)
     return "static";
 }
 
+/* Force this zone to have fire animation flags (debug override) */
+#define FORCE_FIRE_ANIM_ZONE_ID  97
+
 static void write_word_be(uint8_t *p, int16_t v)
 {
     p[0] = (uint8_t)((uint16_t)v >> 8);
@@ -355,6 +358,11 @@ int level_parse(LevelState *level)
                 continue;
             }
             const uint8_t *zd = ld + zoff;
+            if (z == FORCE_FIRE_ANIM_ZONE_ID) {
+                uint8_t *w = (uint8_t *)zd;
+                write_word_be(w + ZONE_OFF_BRIGHTNESS, (int16_t)0x0308);   /* fire, base 8 */
+                write_word_be(w + ZONE_OFF_UPPER_BRIGHT, (int16_t)0x0308);
+            }
             int16_t zone_id = read_word(zd + 0);
             int32_t floor_y = read_long(zd + ZONE_OFF_FLOOR);
             int32_t roof_y = read_long(zd + ZONE_OFF_ROOF);
@@ -617,12 +625,9 @@ static inline unsigned zone_anim_type_from_word(int16_t word)
     if (lo >= 1u && lo <= 3u) return lo;
     return 0;
 }
-static inline int zone_anim_base_from_word(int16_t word, unsigned anim_type)
-{
-    unsigned hi = (unsigned)((uint16_t)word >> 8) & 0xFFu;
-    unsigned lo = (unsigned)((uint16_t)word) & 0xFFu;
-    return (hi == anim_type) ? (int)lo : (int)hi;
-}
+
+/* Zone 97 forced to fire animation (debug/override) */
+#define FORCE_FIRE_ANIM_ZONE_ID  97
 
 int16_t level_get_zone_brightness(const LevelState *level, int16_t zone_id, int use_upper)
 {
@@ -630,6 +635,10 @@ int16_t level_get_zone_brightness(const LevelState *level, int16_t zone_id, int 
         return 0;
     if (zone_id < 0 || zone_id >= level->num_zones)
         return 0;
+
+    if (zone_id == FORCE_FIRE_ANIM_ZONE_ID)
+        return (int16_t)level->bright_anim_values[2]; /* fire = anim 3, table value only */
+
     int32_t zoff = read_long(level->zone_adds + (size_t)zone_id * 4u);
     size_t data_len = level->data_byte_count;
     if (zoff < 0 || (data_len != 0 && (size_t)zoff + 48u > data_len))
@@ -644,13 +653,9 @@ int16_t level_get_zone_brightness(const LevelState *level, int16_t zone_id, int 
     unsigned anim = zone_anim_type_from_word(word);
     if (anim == 0)
         return word;
-    if (anim >= 1 && anim <= 3) {
-        int base = zone_anim_base_from_word(word, anim);
-        int v = base + level->bright_anim_values[anim - 1];
-        if (v < 0) v = 0;
-        if (v > 15) v = 15;
-        return (int16_t)v;
-    }
+    /* Amiga: animated zone brightness = table value only (no base, no clamp). add.w ZoneBright,d6 uses full range e.g. -10..10 */
+    if (anim >= 1 && anim <= 3)
+        return (int16_t)level->bright_anim_values[anim - 1];
     return word;
 }
 
