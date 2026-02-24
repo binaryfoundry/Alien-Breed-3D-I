@@ -32,24 +32,6 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Anim type 1=pulse, 2=flicker, 3=fire. Amiga uses high byte; some levels use low byte (e.g. 0x0001). */
-static inline unsigned zone_anim_type(int16_t word)
-{
-    unsigned hi = (unsigned)((uint16_t)word >> 8) & 0xFFu;
-    unsigned lo = (unsigned)((uint16_t)word) & 0xFFu;
-    if (hi >= 1u && hi <= 3u) return hi;
-    if (lo >= 1u && lo <= 3u) return lo;
-    return 0;
-}
-
-/* Base brightness from the other byte (Amiga: base + anim table value). */
-static inline int zone_anim_base(int16_t word, unsigned anim_type)
-{
-    unsigned hi = (unsigned)((uint16_t)word >> 8) & 0xFFu;
-    unsigned lo = (unsigned)((uint16_t)word) & 0xFFu;
-    return (hi == anim_type) ? (int)lo : (int)hi;  /* anim in high -> base=low; else base=high */
-}
-
 /* Amiga key codes used in the original */
 #define KEY_PAUSE   0x19
 #define KEY_ESC     0x45
@@ -111,11 +93,11 @@ void game_loop(GameState *state)
             pending_vblanks += (int)(vblank_remainder_ms / 20);
             vblank_remainder_ms %= 20;
 
-            /* Zone list debug output every 5 seconds (disabled) */
-            /* if (state->level.num_zones > 0 && now - last_zone_log_ticks >= 5000) {
-                level_log_zones(&state->level);
+            /* Log player zone every 3 seconds */
+            if (now - last_zone_log_ticks >= 3000) {
+                printf("[Game] Player zone: %d\n", state->plr1.zone);
                 last_zone_log_ticks = now;
-            } */
+            }
         }
 
         /* ================================================================
@@ -195,68 +177,8 @@ void game_loop(GameState *state)
                 player2_control(state);
             }
 
-            /* ---- Phase 10: Zone brightness (level data: ZONE_OFF_BRIGHTNESS / ZONE_OFF_UPPER_BRIGHT) ---- */
-            if (state->level.zone_adds && state->level.data &&
-                state->level.zone_bright_table) {
-                int use_le = state->level.zone_brightness_le;
-                for (int z = 0; z < state->level.num_zones; z++) {
-                    const uint8_t *za = state->level.zone_adds;
-                    int32_t zoff = (int32_t)((za[z*4]<<24)|(za[z*4+1]<<16)|
-                                   (za[z*4+2]<<8)|za[z*4+3]);
-                    const uint8_t *zd = state->level.data + zoff;
-
-                    int16_t bright_lo = use_le
-                        ? (int16_t)((zd[ZONE_OFF_BRIGHTNESS  +1]<<8)|zd[ZONE_OFF_BRIGHTNESS  ])
-                        : (int16_t)((zd[ZONE_OFF_BRIGHTNESS  ]<<8)|zd[ZONE_OFF_BRIGHTNESS  +1]);
-                    int16_t bright_hi = use_le
-                        ? (int16_t)((zd[ZONE_OFF_UPPER_BRIGHT+1]<<8)|zd[ZONE_OFF_UPPER_BRIGHT])
-                        : (int16_t)((zd[ZONE_OFF_UPPER_BRIGHT]<<8)|zd[ZONE_OFF_UPPER_BRIGHT+1]);
-
-                    /* Static only when anim type is 0 (high and low byte not 1/2/3). */
-                    if (zone_anim_type(bright_lo) == 0) {
-                        state->level.zone_bright_table[z] = bright_lo;
-                    }
-                    if (state->level.num_zones > 0 && zone_anim_type(bright_hi) == 0) {
-                        state->level.zone_bright_table[z + state->level.num_zones] = bright_hi;
-                    }
-                }
-            }
-
+            /* ---- Phase 10: Zone brightness animation (bright_anim_values updated; rendering reads from zone data) ---- */
             bright_anim_handler(state);
-
-            /* Animated zones: Amiga uses base (other byte) + anim table value; clamp 0-15. */
-            if (state->level.zone_adds && state->level.data &&
-                state->level.zone_bright_table) {
-                int use_le = state->level.zone_brightness_le;
-                for (int z = 0; z < state->level.num_zones; z++) {
-                    const uint8_t *za = state->level.zone_adds;
-                    int32_t zoff = (int32_t)((za[z*4]<<24)|(za[z*4+1]<<16)|
-                                   (za[z*4+2]<<8)|za[z*4+3]);
-                    const uint8_t *zd = state->level.data + zoff;
-                    int16_t bright_lo = use_le
-                        ? (int16_t)((zd[ZONE_OFF_BRIGHTNESS  +1]<<8)|zd[ZONE_OFF_BRIGHTNESS  ])
-                        : (int16_t)((zd[ZONE_OFF_BRIGHTNESS  ]<<8)|zd[ZONE_OFF_BRIGHTNESS  +1]);
-                    int16_t bright_hi = use_le
-                        ? (int16_t)((zd[ZONE_OFF_UPPER_BRIGHT+1]<<8)|zd[ZONE_OFF_UPPER_BRIGHT])
-                        : (int16_t)((zd[ZONE_OFF_UPPER_BRIGHT]<<8)|zd[ZONE_OFF_UPPER_BRIGHT+1]);
-                    unsigned int anim_lo = zone_anim_type(bright_lo);
-                    unsigned int anim_hi = zone_anim_type(bright_hi);
-                    if (anim_lo >= 1 && anim_lo <= 3) {
-                        int base = zone_anim_base(bright_lo, anim_lo);
-                        int v = base + state->level.bright_anim_values[anim_lo - 1];
-                        if (v < 0) v = 0;
-                        if (v > 15) v = 15;
-                        state->level.zone_bright_table[z] = (int16_t)v;
-                    }
-                    if (state->level.num_zones > 0 && anim_hi >= 1 && anim_hi <= 3) {
-                        int base = zone_anim_base(bright_hi, anim_hi);
-                        int v = base + state->level.bright_anim_values[anim_hi - 1];
-                        if (v < 0) v = 0;
-                        if (v > 15) v = 15;
-                        state->level.zone_bright_table[z + state->level.num_zones] = (int16_t)v;
-                    }
-                }
-            }
 
             /* ---- Phase 11: Visibility checks (multiplayer) ---- */
             if (state->mode != MODE_SINGLE) {

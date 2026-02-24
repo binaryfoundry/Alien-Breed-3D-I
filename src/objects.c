@@ -1640,14 +1640,9 @@ static int16_t bright_anim_advance(const int16_t *table, unsigned int *idx)
 /* -----------------------------------------------------------------------
  * Brightness animation handler
  *
- * Translated from Anims.s BrightAnimHandler (line ~197-222) and AB3DI.s
- * doneTalking zone brightness resolution. Two mechanisms:
- *
- * 1) Amiga encoding: zone brightness word high byte 1/2/3 = use
- *    brightAnimTable[0/1/2] (pulse, flicker, fire). We advance the three
- *    global anims each tick and store current values in bright_anim_values.
- *
- * 2) Optional bright_anim_list from level: per-zone list (future use).
+ * Advances the three global anims (pulse, flicker, fire) each tick.
+ * Zone brightness is read from level data at render time via level_get_zone_brightness();
+ * zones with brightness word high/low byte 1/2/3 use these values. No per-zone list.
  * ----------------------------------------------------------------------- */
 void bright_anim_handler(GameState *state)
 {
@@ -1655,46 +1650,10 @@ void bright_anim_handler(GameState *state)
     static unsigned int bright_anim_tick_count = 0;
 
     bright_anim_tick_count++;
-    /* Advance the three global anims only every N ticks so the cycle is slower and smoother. */
     if (bright_anim_tick_count % BRIGHT_ANIM_TICK_DIVIDER == 0) {
         lev->bright_anim_values[0] = bright_anim_advance(pulse_anim, &lev->bright_anim_indices[0]);
         lev->bright_anim_values[1] = bright_anim_advance(flicker_anim, &lev->bright_anim_indices[1]);
         lev->bright_anim_values[2] = bright_anim_advance(fire_flicker_anim, &lev->bright_anim_indices[2]);
-    }
-
-    /* Optional: per-zone list from level (if present). */
-    if (!lev->bright_anim_list) return;
-
-    uint8_t *ba = lev->bright_anim_list;
-    while (1) {
-        int16_t zone_id = (int16_t)((ba[0] << 8) | ba[1]);
-        if (zone_id < 0) break;
-
-        int16_t anim_type = (int16_t)((ba[2] << 8) | ba[3]); /* 0=pulse, 1=flicker, 2=fire */
-        int16_t anim_idx  = (int16_t)((ba[4] << 8) | ba[5]);
-        int16_t base_bright = (int16_t)((ba[6] << 8) | ba[7]);
-
-        const int16_t *table = pulse_anim;
-        if (anim_type == 1) table = flicker_anim;
-        else if (anim_type == 2) table = fire_flicker_anim;
-
-        int16_t val = table[anim_idx];
-        if (val == BRIGHT_ANIM_SENTINEL) {
-            anim_idx = 0;
-            val = table[0];
-        }
-        anim_idx++;
-        ba[4] = (uint8_t)(anim_idx >> 8);
-        ba[5] = (uint8_t)(anim_idx);
-
-        int16_t final_bright = (int16_t)(base_bright + val);
-        if (final_bright < 0) final_bright = 0;
-        if (final_bright > 255) final_bright = 255;
-
-        if (lev->zone_bright_table) {
-            lev->zone_bright_table[zone_id] = (int16_t)final_bright;
-        }
-        ba += 8;
     }
 }
 
@@ -1930,13 +1889,9 @@ void use_player1(GameState *state)
     NASTY_LIVES(*plr_obj) = (int8_t)(state->plr1.energy + 1);
 
     /* Zone brightness (AB3DI.s lines 2358-2366) */
-    if (state->level.zone_bright_table && state->plr1.zone >= 0) {
-        int16_t zb = state->level.zone_bright_table[state->plr1.zone];
-        /* If in top, use upper brightness (stored at zone + num_zones) */
-        if (state->plr1.stood_in_top && state->level.num_zones > 0) {
-            zb = state->level.zone_bright_table[state->plr1.zone +
-                                                 state->level.num_zones];
-        }
+    if (state->plr1.zone >= 0) {
+        int16_t zb = level_get_zone_brightness(&state->level, state->plr1.zone,
+                                                state->plr1.stood_in_top ? 1 : 0);
         plr_obj->raw[2] = (uint8_t)(zb >> 8);
         plr_obj->raw[3] = (uint8_t)(zb);
     }
@@ -1994,12 +1949,9 @@ void use_player2(GameState *state)
 
     NASTY_LIVES(*plr_obj) = (int8_t)(state->plr2.energy + 1);
 
-    if (state->level.zone_bright_table && state->plr2.zone >= 0) {
-        int16_t zb = state->level.zone_bright_table[state->plr2.zone];
-        if (state->plr2.stood_in_top && state->level.num_zones > 0) {
-            zb = state->level.zone_bright_table[state->plr2.zone +
-                                                 state->level.num_zones];
-        }
+    if (state->plr2.zone >= 0) {
+        int16_t zb = level_get_zone_brightness(&state->level, state->plr2.zone,
+                                                state->plr2.stood_in_top ? 1 : 0);
         plr_obj->raw[2] = (uint8_t)(zb >> 8);
         plr_obj->raw[3] = (uint8_t)(zb);
     }

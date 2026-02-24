@@ -276,11 +276,6 @@ void play_the_game(GameState *state)
                 (size_t)(state->level.num_zones + 1));
         }
 
-        /* Allocate zone brightness table (16-bit per zone: lower + upper = 2 * num_zones) */
-        if (state->level.num_zones > 0 && !state->level.zone_bright_table) {
-            state->level.zone_bright_table = (int16_t *)calloc(1,
-                (size_t)(state->level.num_zones * 2 * sizeof(int16_t)));
-        }
         /* Initialize brightness animation state (Amiga brightAnimTable indices) */
         memset(state->level.bright_anim_indices, 0, sizeof(state->level.bright_anim_indices));
         state->level.bright_anim_values[0] = 0;

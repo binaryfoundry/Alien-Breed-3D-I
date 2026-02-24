@@ -57,6 +57,14 @@ int level_get_zone_info(const LevelState *level, int16_t zone_id, ZoneInfo *out)
 uint8_t *level_get_zone_data_ptr(LevelState *level, int16_t zone_id);
 
 /*
+ * Get current brightness for a zone (lower or upper floor). Reads from level zone data and
+ * applies animated brightness (pulse/flicker/fire) using level->bright_anim_values. No allocation.
+ * use_upper: 0 = lower floor (ZONE_OFF_BRIGHTNESS), 1 = upper floor (ZONE_OFF_UPPER_BRIGHT).
+ * Returns brightness value (0-15 for animated; raw word for static), or 0 if invalid.
+ */
+int16_t level_get_zone_brightness(const LevelState *level, int16_t zone_id, int use_upper);
+
+/*
  * Set the zone roof Y (big-endian long at ZONE_OFF_ROOF). Returns 0 on success, -1 if invalid.
  */
 int level_set_zone_roof(LevelState *level, int16_t zone_id, int32_t roof_y);

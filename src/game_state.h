@@ -139,8 +139,6 @@ typedef struct {
     uint8_t *plr2_obj;           /* pointer to player 2 object in object data */
     uint8_t *connect_table;
     uint8_t *water_list;          /* WaterList - water zones + oscillation data */
-    uint8_t *bright_anim_list;    /* BrightAnimList - animated brightness zones */
-    int16_t *zone_bright_table;   /* ZoneBrightTable - 16-bit per zone (lower + upper = 2*num_zones) */
     int16_t bright_anim_values[3];    /* Amiga brightAnimTable: current value for anim 1,2,3 (pulse,flicker,fire) */
     unsigned int bright_anim_indices[3]; /* Current index into pulse_anim / flicker_anim / fire_flicker_anim */
     uint8_t *workspace;           /* WorkSpace bitmask for zone visibility */

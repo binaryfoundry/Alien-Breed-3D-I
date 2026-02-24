@@ -22,6 +22,23 @@ static int32_t read_long(const uint8_t *p)
     return (int32_t)((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]);
 }
 
+/* 0=static, 1=pulse, 2=flicker, 3=fire (from zone brightness word high/low byte) */
+static inline unsigned zone_bright_anim_type(int16_t word)
+{
+    unsigned hi = (unsigned)((uint16_t)word >> 8) & 0xFFu;
+    unsigned lo = (unsigned)((uint16_t)word) & 0xFFu;
+    if (hi >= 1u && hi <= 3u) return hi;
+    if (lo >= 1u && lo <= 3u) return lo;
+    return 0;
+}
+static const char *zone_anim_flag_name(unsigned t)
+{
+    if (t == 1) return "pulse";
+    if (t == 2) return "flicker";
+    if (t == 3) return "fire";
+    return "static";
+}
+
 static void write_word_be(uint8_t *p, int16_t v)
 {
     p[0] = (uint8_t)((uint16_t)v >> 8);
@@ -343,8 +360,11 @@ int level_parse(LevelState *level)
             int32_t roof_y = read_long(zd + ZONE_OFF_ROOF);
             int16_t bright_lo = read_word(zd + ZONE_OFF_BRIGHTNESS);
             int16_t bright_hi = read_word(zd + ZONE_OFF_UPPER_BRIGHT);
-            printf("[LEVEL]   zone[%d] offset %ld id=%d floor=%ld roof=%ld bright=(%d,%d)\n",
-                   z, (long)zoff, (int)zone_id, (long)floor_y, (long)roof_y, (int)bright_lo, (int)bright_hi);
+            unsigned anim_lo = zone_bright_anim_type(bright_lo);
+            unsigned anim_hi = zone_bright_anim_type(bright_hi);
+            printf("[LEVEL]   zone[%d] offset %ld id=%d floor=%ld roof=%ld bright=(%d,%d) anim=(%s,%s)\n",
+                   z, (long)zoff, (int)zone_id, (long)floor_y, (long)roof_y, (int)bright_lo, (int)bright_hi,
+                   zone_anim_flag_name(anim_lo), zone_anim_flag_name(anim_hi));
         }
     }
 
@@ -486,33 +506,6 @@ int level_parse(LevelState *level)
         }
     }
 
-    /* Log zones with animated (flashing) brightness (anim 1=pulse, 2=flicker, 3=fire). Big-endian. */
-    if (level->zone_adds && level->data && level->num_zones > 0) {
-        int32_t max_zoff = 0x00FFFFFF;
-        if (level->data_byte_count > 32)
-            max_zoff = (int32_t)(level->data_byte_count - 32);
-        int flashing_count = 0;
-        for (int z = 0; z < level->num_zones; z++) {
-            int32_t zoff = read_long(level->zone_adds + z * 4);
-            if (zoff < 0 || zoff > max_zoff) continue;
-            const uint8_t *zd = ld + zoff;
-            int16_t bright_lo = (int16_t)((zd[ZONE_OFF_BRIGHTNESS  ] << 8) | zd[ZONE_OFF_BRIGHTNESS  + 1]);
-            int16_t bright_hi = (int16_t)((zd[ZONE_OFF_UPPER_BRIGHT] << 8) | zd[ZONE_OFF_UPPER_BRIGHT + 1]);
-            unsigned hi_lo = ((unsigned)((uint16_t)bright_lo >> 8) & 0xFFu), lo_lo = ((uint16_t)bright_lo & 0xFFu);
-            unsigned hi_hi = ((unsigned)((uint16_t)bright_hi >> 8) & 0xFFu), lo_hi = ((uint16_t)bright_hi & 0xFFu);
-            unsigned anim_lo = (hi_lo >= 1u && hi_lo <= 3u) ? hi_lo : (lo_lo >= 1u && lo_lo <= 3u) ? lo_lo : 0;
-            unsigned anim_hi = (hi_hi >= 1u && hi_hi <= 3u) ? hi_hi : (lo_hi >= 1u && lo_hi <= 3u) ? lo_hi : 0;
-            if (anim_lo != 0 || anim_hi != 0) {
-                const char *name_lo = (anim_lo == 1) ? "pulse" : (anim_lo == 2) ? "flicker" : (anim_lo == 3) ? "fire" : "static";
-                const char *name_hi = (anim_hi == 1) ? "pulse" : (anim_hi == 2) ? "flicker" : (anim_hi == 3) ? "fire" : "static";
-                printf("[LEVEL] zone[%d] flashing: lower=%s (0x%04X) upper=%s (0x%04X)\n",
-                       z, name_lo, (unsigned)(uint16_t)bright_lo, name_hi, (unsigned)(uint16_t)bright_hi);
-                flashing_count++;
-            }
-        }
-        printf("[LEVEL] %d zone(s) with animated (flashing) brightness\n", flashing_count);
-    }
-
     return 0;
 }
 
@@ -615,6 +608,52 @@ uint8_t *level_get_zone_data_ptr(LevelState *level, int16_t zone_id)
     return level->data + zoff;
 }
 
+/* Anim type 1=pulse, 2=flicker, 3=fire. Amiga uses high byte; some levels use low byte. */
+static inline unsigned zone_anim_type_from_word(int16_t word)
+{
+    unsigned hi = (unsigned)((uint16_t)word >> 8) & 0xFFu;
+    unsigned lo = (unsigned)((uint16_t)word) & 0xFFu;
+    if (hi >= 1u && hi <= 3u) return hi;
+    if (lo >= 1u && lo <= 3u) return lo;
+    return 0;
+}
+static inline int zone_anim_base_from_word(int16_t word, unsigned anim_type)
+{
+    unsigned hi = (unsigned)((uint16_t)word >> 8) & 0xFFu;
+    unsigned lo = (unsigned)((uint16_t)word) & 0xFFu;
+    return (hi == anim_type) ? (int)lo : (int)hi;
+}
+
+int16_t level_get_zone_brightness(const LevelState *level, int16_t zone_id, int use_upper)
+{
+    if (!level->zone_adds || !level->data || level->num_zones <= 0)
+        return 0;
+    if (zone_id < 0 || zone_id >= level->num_zones)
+        return 0;
+    int32_t zoff = read_long(level->zone_adds + (size_t)zone_id * 4u);
+    size_t data_len = level->data_byte_count;
+    if (zoff < 0 || (data_len != 0 && (size_t)zoff + 48u > data_len))
+        return 0;
+    const uint8_t *zd = level->data + zoff;
+    int off = use_upper ? ZONE_OFF_UPPER_BRIGHT : ZONE_OFF_BRIGHTNESS;
+    int16_t word;
+    if (level->zone_brightness_le)
+        word = (int16_t)((zd[off + 1] << 8) | zd[off]);
+    else
+        word = (int16_t)((zd[off] << 8) | zd[off + 1]);
+    unsigned anim = zone_anim_type_from_word(word);
+    if (anim == 0)
+        return word;
+    if (anim >= 1 && anim <= 3) {
+        int base = zone_anim_base_from_word(word, anim);
+        int v = base + level->bright_anim_values[anim - 1];
+        if (v < 0) v = 0;
+        if (v > 15) v = 15;
+        return (int16_t)v;
+    }
+    return word;
+}
+
 static inline int16_t swap16(int16_t v)
 {
     return (int16_t)(((uint16_t)v >> 8) | ((uint16_t)v << 8));
@@ -662,8 +701,11 @@ void level_log_zones(const LevelState *level)
         int32_t roof_y = read_long(zd + ZONE_OFF_ROOF);
         int16_t bright_lo = read_word(zd + ZONE_OFF_BRIGHTNESS);
         int16_t bright_hi = read_word(zd + ZONE_OFF_UPPER_BRIGHT);
-        printf("[LEVEL]   zone[%d] offset %ld id=%d floor=%ld roof=%ld bright=(%d,%d)\n",
-               z, (long)zoff, (int)zone_id, (long)floor_y, (long)roof_y, (int)bright_lo, (int)bright_hi);
+        unsigned anim_lo = zone_bright_anim_type(bright_lo);
+        unsigned anim_hi = zone_bright_anim_type(bright_hi);
+        printf("[LEVEL]   zone[%d] offset %ld id=%d floor=%ld roof=%ld bright=(%d,%d) anim=(%s,%s)\n",
+               z, (long)zoff, (int)zone_id, (long)floor_y, (long)roof_y, (int)bright_lo, (int)bright_hi,
+               zone_anim_flag_name(anim_lo), zone_anim_flag_name(anim_hi));
     }
 }
 

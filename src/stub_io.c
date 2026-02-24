@@ -412,7 +412,6 @@ static void build_test_level_data(LevelState *level)
 
     level->connect_table = NULL;
     level->water_list = NULL;
-    level->bright_anim_list = NULL;
 
     printf("[IO] Test level: %d zones, %d points, %d lines, %d bytes\n",
            NUM_ZONES, NUM_POINTS, NUM_FLINES, total);
@@ -424,7 +423,7 @@ static void build_test_level_graphics(LevelState *level)
      *   [zone_graph_adds: NUM_ZONES * 8 bytes]  (lower gfx offset, upper gfx offset)
      *   [list_of_graph_rooms: (NUM_ZONES+1) * 8 bytes]  (zone_id, clip_off, flags, pad)
      *   [per-zone graphics: N * per_zone bytes]
-     *   [zone_bright_table: 2*NUM_ZONES int16_t = 4*NUM_ZONES bytes]
+     *   [reserved: 2*NUM_ZONES int16_t - was zone_bright_table; brightness now from zone data]
      */
 
     /* per_zone: zone_num(2) + 4 walls(4*30) + floor entry(24) + roof entry(24) + sentinel(2) */
@@ -530,11 +529,6 @@ static void build_test_level_graphics(LevelState *level)
     level->graphics = buf;
     level->zone_graph_adds = buf;              /* graph adds at start of buffer */
     level->list_of_graph_rooms = buf + off_lgr;
-    /* Owned buffer so we can overwrite with resolved (including animated) brightness each frame */
-    level->zone_bright_table = (int16_t *)malloc(2 * NUM_ZONES * sizeof(int16_t));
-    if (level->zone_bright_table) {
-        memcpy(level->zone_bright_table, buf + off_bright, 2 * NUM_ZONES * sizeof(int16_t));
-    }
 
     /* Door table for test level: one door in zone 0 (wall between room 0 and 1).
      * Same format as lift: 22 bytes per entry, pos/top/bot (*256). Terminator zone_id -1. */
@@ -687,7 +681,6 @@ void io_release_level_memory(LevelState *level)
     level->other_nasty_data = NULL;
 
     free(level->workspace);         level->workspace = NULL;
-    free(level->zone_bright_table); level->zone_bright_table = NULL;
 
     /* list_of_graph_rooms now points into level->data (zone_data + 48),
      * so it must NOT be freed separately. Just NULL it. */
@@ -749,7 +742,6 @@ void io_release_level_memory(LevelState *level)
     level->plr2_obj = NULL;
     level->connect_table = NULL;
     level->water_list = NULL;
-    level->bright_anim_list = NULL;
 }
 
 /* Wall texture table - matches WallChunk.s wallchunkdata ordering.

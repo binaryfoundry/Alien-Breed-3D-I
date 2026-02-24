@@ -26,6 +26,7 @@
  */
 
 #include "renderer.h"
+#include "level.h"
 #include "math_tables.h"
 #include "game_data.h"
 #include "game_types.h"
@@ -1912,14 +1913,10 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
     /* int16_t gfx_zone = rd16(ptr); */
     ptr += 2;
 
-    /* Zone brightness from level (Amiga ZoneBright): 16-bit per zone, lower/upper at [zone] / [zone+num_zones].
-     * Added to d6 so higher value = darker zone; negative = brighter. Default 0. */
+    /* Zone brightness from level data (no table); anim applied via level_get_zone_brightness. */
     int16_t zone_bright = 0;
-    if (level->zone_bright_table && zone_id >= 0 && zone_id < level->num_zones) {
-        int bright_idx = use_upper && level->num_zones > 0
-            ? zone_id + level->num_zones : zone_id;
-        zone_bright = level->zone_bright_table[bright_idx];
-    }
+    if (zone_id >= 0 && zone_id < level->num_zones)
+        zone_bright = level_get_zone_brightness(level, zone_id, use_upper ? 1 : 0);
 
 
     /* Amiga: draw walls and arcs in stream order (no deferral). */
