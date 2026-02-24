@@ -1250,36 +1250,55 @@ void object_handle_bullet(GameObject *obj, GameState *state)
     }
 }
 
-/* Door/zone helpers: exit list format matches movement.c (ToExitList, floor line connect).
- * Used so "stand against door and press space" works from either side of the door. */
-#define DOOR_ZONE_EXIT_LIST  32
+/* Door wall list: 6 bytes per entry (fline w, gfx_off l). Floor line: 16 bytes, x/z at 0,2 and xlen/zlen at 4,6 (movement.c FLINE_*). */
+#define DOOR_WALL_ENT_SIZE   6
 #define DOOR_FLINE_SIZE      16
-#define DOOR_FLINE_CONNECT   8
+#define DOOR_FLINE_X         0
+#define DOOR_FLINE_Z         2
+#define DOOR_FLINE_XLEN      4
+#define DOOR_FLINE_ZLEN      6
+#define DOOR_NEAR_THRESH     4   /* player within this distance of a door fline counts as "at door" */
 
-/* Returns true if player_zone is the door's zone or a zone adjacent to it (connected by an exit). */
-static bool player_at_door_zone(GameState *state, int16_t door_zone_id, int16_t player_zone)
+/* Returns true if player is in door's zone or within DOOR_NEAR_THRESH of any door wall floor line (dot with fline plane < 4). */
+static bool player_at_door_zone(GameState *state, int16_t door_zone_id, int16_t player_zone, int door_idx, int plr_num)
 {
+    if (player_zone < 0) return false;
     if (player_zone == door_zone_id) return true;
-    if (!state->level.zone_adds || !state->level.data || !state->level.floor_lines) return false;
-    if (door_zone_id < 0 || door_zone_id >= state->level.num_zones) return false;
 
-    int32_t zoff = (int32_t)be32(state->level.zone_adds + (uint32_t)door_zone_id * 4u);
-    const uint8_t *zone_data = state->level.data + zoff;
-    int16_t list_off = be16(zone_data + DOOR_ZONE_EXIT_LIST);
-    if (list_off < 0) return false;
-    const uint8_t *list_ptr = zone_data + list_off;
+    if (!state->level.door_wall_list || !state->level.door_wall_list_offsets || !state->level.floor_lines) return false;
+    if (door_idx < 0 || (uint32_t)door_idx >= state->level.num_doors) return false;
 
-    for (int i = 0; i < 64; i++) {
-        int16_t entry = be16(list_ptr + (unsigned)i * 2u);
-        if (entry < 0) break;  /* -1 ends exit portion */
-        const uint8_t *fline = state->level.floor_lines + (unsigned)(int16_t)entry * DOOR_FLINE_SIZE;
-        int16_t connect = be16(fline + DOOR_FLINE_CONNECT);
-        if (connect == player_zone) return true;
+    int32_t px, pz;
+    if (plr_num == 0) {
+        px = state->plr1.xoff >> 16;
+        pz = state->plr1.zoff >> 16;
+    } else {
+        px = state->plr2.xoff >> 16;
+        pz = state->plr2.zoff >> 16;
+    }
+
+    uint32_t start = state->level.door_wall_list_offsets[door_idx];
+    uint32_t end   = state->level.door_wall_list_offsets[door_idx + 1];
+    for (uint32_t j = start; j < end; j++) {
+        const uint8_t *ent = state->level.door_wall_list + j * DOOR_WALL_ENT_SIZE;
+        int16_t fi = be16(ent);
+        if (fi < 0 || (int32_t)fi >= state->level.num_floor_lines) continue;
+        const uint8_t *fl = state->level.floor_lines + (uint32_t)(int16_t)fi * DOOR_FLINE_SIZE;
+        int32_t lx   = (int32_t)(int16_t)be16(fl + DOOR_FLINE_X);
+        int32_t lz   = (int32_t)(int16_t)be16(fl + DOOR_FLINE_Z);
+        int32_t lxlen = (int32_t)(int16_t)be16(fl + DOOR_FLINE_XLEN);
+        int32_t lzlen = (int32_t)(int16_t)be16(fl + DOOR_FLINE_ZLEN);
+        /* Signed distance from point to line (dot with plane): (P - A) · N where N = (-lzlen, lxlen). */
+        int64_t cross = (int64_t)(px - lx) * lzlen - (int64_t)(pz - lz) * lxlen;
+        int64_t len_sq = (int64_t)lxlen * lxlen + (int64_t)lzlen * lzlen;
+        if (len_sq <= 0) continue;
+        /* |cross|/sqrt(len_sq) < 4  <=>  cross*cross < 16*len_sq */
+        if (cross < 0) cross = -cross;
+        if (cross * cross < 4000 * len_sq) return true;
     }
     return false;
 }
 
-int  k =0;
 /* -----------------------------------------------------------------------
  * Door routine
  *
@@ -1309,7 +1328,7 @@ void door_routine(GameState *state)
         int16_t door_type = be16(door + 2);
         int32_t door_pos = be32(door + 4);
         int16_t door_vel = be16(door + 8);
-        int32_t door_top = be32(door + 10);  /* open position (more negative) */
+        int32_t door_top = be32(door + 10)+1024;  /* open position (more negative) */
         int32_t door_bot = be32(door + 14);  /* closed position (more positive) */
         int16_t timer = be16(door + 18);
         uint16_t door_flags = (uint16_t)be16(door + 20);
@@ -1318,9 +1337,12 @@ void door_routine(GameState *state)
         if (door_type == 0) {
             int satisfied;
             if (door_flags == 0) {
-                /* Player-only: open only when player is at door and pressing space, not from switches. */
-                satisfied = (player_at_door_zone(state, zone_id, state->plr1.zone) && state->plr1.p_spctap) ||
-                            (player_at_door_zone(state, zone_id, state->plr2.zone) && state->plr2.p_spctap);
+                /* Player-only: open when player at door taps space; stay open while player remains at door. */
+                int plr1_at = player_at_door_zone(state, zone_id, state->plr1.zone, door_idx, 0);
+                int plr2_at = player_at_door_zone(state, zone_id, state->plr2.zone, door_idx, 1);
+                int at_door = plr1_at || plr2_at;
+                int space_tap = (plr1_at && state->plr1.p_spctap) || (plr2_at && state->plr2.p_spctap);
+                satisfied = at_door && (space_tap || door_pos < door_bot);
             } else {
                 satisfied = ((uint16_t)game_conditions & door_flags) == door_flags;
             }
@@ -1341,10 +1363,11 @@ void door_routine(GameState *state)
                     door_pos = door_bot;
                 }
             }
-            door_pos += (int32_t)door_vel * state->temp_frames * 64;
-            if (door_pos < door_top) door_pos = door_top;
-            if (door_pos > door_bot) door_pos = door_bot;
         }
+
+        door_pos += (int32_t)door_vel * state->temp_frames * 64;
+        if (door_pos < door_top) door_pos = door_top;
+        if (door_pos > door_bot) door_pos = door_bot;
 
         /* Write back (big-endian) */
         wbe32(door + 4, door_pos);
