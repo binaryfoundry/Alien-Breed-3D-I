@@ -1556,16 +1556,6 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
 
     int32_t y_off = r->yoff;
 
-    /* Multi-floor: only draw objects on the current level. Same rule as objects.c: object is on
-     * upper floor when its world Y (ObjectPoints[pt*8+2]) * 128 <= ZD_ROOF (split height). */
-    const uint8_t *zone_data = NULL;
-    int32_t split_h = 0;
-    if (level_filter >= 0 && level->zone_adds && level->data) {
-        int32_t zo = rd32(level->zone_adds + zone_id * 4);
-        if (zo >= 0) zone_data = level->data + zo;
-        if (zone_data) split_h = rd32(zone_data + 6);  /* ZD_ROOF = split */
-    }
-
     /* Build depth-sorted list of objects in this zone (and on this floor when level_filter >= 0) */
     typedef struct { int idx; int32_t z; } ObjEntry;
     ObjEntry objs[80];
@@ -1573,6 +1563,9 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
 
     int num_pts = level->num_object_points;
     if (num_pts > MAX_OBJ_POINTS) num_pts = MAX_OBJ_POINTS;
+
+    /* Object in_top at offset 63: 0 = lower floor, non-zero = upper floor (kept in sync by movement/objects). */
+    const int obj_off_in_top = 63;
 
     /* Iterate by object index; each object has point number at offset 0 (ObjDraw: move.w (a0)+,d0).
      * Use that to look up ObjRotated[pt_num] so keys and other pickups use correct position/z. */
@@ -1588,11 +1581,11 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         int in_this_zone = (obj_zone >= 0 && obj_zone == (int16_t)zone_id);
         if (!in_this_zone) continue;
 
-        /* Multi-floor: skip objects on the other level */
-        if (level_filter >= 0 && zone_data && pt_num >= 0 && pt_num < num_pts) {
-            int16_t obj_world_y = rd16(level->object_points + (size_t)pt_num * 8 + 2);
-            int on_upper = ((int32_t)obj_world_y * 128 <= split_h);
-            if ((level_filter == 1 && !on_upper) || (level_filter == 0 && on_upper))
+        /* Multi-floor: only render objects when we are drawing their floor. Use object's in_top
+         * so upper/lower is consistent with game logic (objects.c, movement). */
+        if (level_filter >= 0) {
+            int obj_on_upper = (obj[obj_off_in_top] != 0);
+            if ((level_filter == 1 && !obj_on_upper) || (level_filter == 0 && obj_on_upper))
                 continue;
         }
 
