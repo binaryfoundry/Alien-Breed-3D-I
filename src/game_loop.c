@@ -276,9 +276,14 @@ void game_loop(GameState *state)
                 uint8_t vis_zones[256];
                 memset(vis_zones, 0, sizeof(vis_zones));
 
-                if (state->level.workspace) {
-                    memcpy(vis_zones, state->level.workspace,
-                           state->level.num_zones < 256 ? state->level.num_zones : 256);
+                /* Build visibility from zones in draw order (order_zones output).
+                 * level.workspace was never populated, so use zone_order_zones instead. */
+                if (state->zone_order_count > 0) {
+                    for (int i = 0; i < state->zone_order_count && i < 256; i++) {
+                        int16_t z = state->zone_order_zones[i];
+                        if (z >= 0 && z < 256)
+                            vis_zones[z] = 1;
+                    }
                 } else {
                     memset(vis_zones, 1, sizeof(vis_zones));
                 }

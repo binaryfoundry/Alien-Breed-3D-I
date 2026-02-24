@@ -453,6 +453,13 @@ void objects_update(GameState *state)
             continue;
         }
 
+        /* Check worry flag */
+        if (obj->obj.worry == 0) {
+            obj_index++;
+            continue;
+        }
+        obj->obj.worry--;
+
         /* Update rendering Y position from zone floor height.
          * Anims.s: each handler writes 4(a0) = (ToZoneFloor >> 7) - offset.
          * The offset is per-type; barrel uses -60 (= its world_h).
@@ -494,13 +501,6 @@ void objects_update(GameState *state)
                 }
             }
         }
-
-        /* Check worry flag */
-        if (obj->obj.worry == 0) {
-            obj_index++;
-            continue;
-        }
-        obj->obj.worry--;
 
         /* Dispatch by object type */
         int8_t obj_type = obj->obj.number;
@@ -1469,9 +1469,9 @@ void lift_routine(GameState *state)
     uint8_t *lift = state->level.lift_data;
     int lift_idx = 0;
     /* Per-zone max floor (×64 scale to match doors). Lifts store pos in ×256; we convert when writing to zone/wall. */
-    int32_t zone_max_floor[256];
-    uint8_t zone_lift_seen[256];
-    memset(zone_lift_seen, 0, sizeof(zone_lift_seen));
+    //int32_t zone_max_floor[256];
+    //uint8_t zone_lift_seen[256];
+    //memset(zone_lift_seen, 0, sizeof(zone_lift_seen));
 
     /* Iterate lift entries (terminated by -1) */
     while (1) {
@@ -1502,7 +1502,10 @@ void lift_routine(GameState *state)
         wbe16(lift + 8, lift_vel);
 
         /* Lifts use ×256 internally; doors use ×64 for ZD_ROOF and wall. Convert lift to ×64 for zone and wall. */
-        int32_t lift_pos_64 = lift_pos >> 3;
+        int32_t lift_pos_64 = (lift_pos) >> 3;
+
+        if (zone_id >= 0 && zone_id < state->level.num_zones)
+            level_set_zone_floor(&state->level, (int16_t)zone_id, lift_pos_64);
 
         /* Accumulate max floor per zone (×64) for apply and player Y. */
         /*if (zone_id >= 0 && zone_id < state->level.num_zones && (unsigned)zone_id < 256u) {
@@ -1525,13 +1528,14 @@ void lift_routine(GameState *state)
                 int32_t gfx_off = (int32_t)be32(ent + 2);
                 if (state->level.floor_lines && fline >= 0 && (int32_t)fline < state->level.num_floor_lines) {
                     uint8_t *fl = state->level.floor_lines + (uint32_t)(int16_t)fline * 16u;
-                    wbe16(fl + 14, (int16_t)(uint16_t)0x8000);
+                    //wbe16(fl + 14, (int16_t)(uint16_t)0x8000); // TODO read old value for hit sound
                 }
                 if (gfx_off >= 0) {
                     uint8_t *wall_rec = state->level.graphics + (uint32_t)gfx_off;
                     wbe32(wall_rec + 22, lift_pos_64);   /* botofwall = lift floor (×64, same scale as door) */
+                    wbe32(wall_rec + 20, lift_bot >> 3);
                     int16_t yoff = (int16_t)((uint16_t)((-(lift_pos_64 >> 7)) & 0xFFu));  /* match door yoff formula */
-                    wbe16(wall_rec + 10, yoff);
+                    //wbe16(wall_rec + 10, yoff);
                 }
             }
         }
@@ -1541,19 +1545,20 @@ void lift_routine(GameState *state)
     }
 
     /* Apply zone floors once per zone (×64 scale, same as ZD_ROOF for doors). */
-    for (int z = 0; z < state->level.num_zones && z < 256; z++) {
-        if (zone_lift_seen[z])
-            level_set_zone_floor(&state->level, (int16_t)z, zone_max_floor[z]);
-    }
+    ////for (int z = 0; z < state->level.num_zones && z < 256; z++) {
+    //    if (zone_lift_seen[z])
+    //        level_set_zone_floor(&state->level, (int16_t)z, zone_max_floor[z]);
+    //}
 
     /* Player Y when standing on lift (zone_max_floor is ×64, same as ZD_FLOOR / player.c floor_h). */
-    if (state->plr1.stood_on_lift && state->plr1.zone >= 0 && state->plr1.zone < 256 &&
-        zone_lift_seen[state->plr1.zone])
-        state->plr1.s_tyoff = zone_max_floor[state->plr1.zone] - state->plr1.s_height;
-    if (state->plr2.stood_on_lift && state->plr2.zone >= 0 && state->plr2.zone < 256 &&
-        zone_lift_seen[state->plr2.zone])
-        state->plr2.s_tyoff = zone_max_floor[state->plr2.zone] - state->plr2.s_height;
+    //if (state->plr1.stood_on_lift && state->plr1.zone >= 0 && state->plr1.zone < 256 &&
+    //    zone_lift_seen[state->plr1.zone])
+    //    state->plr1.s_tyoff = zone_max_floor[state->plr1.zone] - state->plr1.s_height;
+    //if (state->plr2.stood_on_lift && state->plr2.zone >= 0 && state->plr2.zone < 256 &&
+   //    zone_lift_seen[state->plr2.zone])
+    //    state->plr2.s_tyoff = zone_max_floor[state->plr2.zone] - state->plr2.s_height;
 }
+
 
 /* -----------------------------------------------------------------------
  * Switch routine
