@@ -1066,7 +1066,8 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
                           const uint8_t *pal, size_t pal_size,
                           uint32_t ptr_offset, uint16_t down_strip,
                           int src_cols, int src_rows,
-                          int16_t brightness, int sprite_type)
+                          int16_t brightness, int sprite_type,
+                          int32_t clip_top_sy, int32_t clip_bot_sy)
 {
     (void)sprite_type;
     uint8_t *buf = g_renderer.buffer;
@@ -1142,6 +1143,8 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
         for (int dy = 0; dy < height; dy++) {
             int screen_row = sy + dy;
             if (screen_row < 0 || screen_row >= rh) continue;
+            /* Room band clip: do not draw above ceiling or below floor (floor covers feet). */
+            if (clip_top_sy < clip_bot_sy && (screen_row < clip_top_sy || screen_row > clip_bot_sy)) continue;
 
             /* Billboards are drawn last in the zone (after all walls), so we draw on top with no clip test. */
             /* Map screen row to source row 0..eff_rows-1 */
@@ -1697,8 +1700,8 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         }
         /* Vertical placement: Amiga positions sprite then adds DOWN_STRIP when indexing strip rows.
          * Convert down_strip (source rows) to screen pixels and shift sprite down so content aligns. */
-        //int down_strip_px = (src_rows > 0) ? (int)((int32_t)down_strip * sprite_h / src_rows) : 0;
-        int scr_y = floor_screen_y - half_h;
+        int down_strip_px = (src_rows > 0) ? (int)((int32_t)down_strip * sprite_h / src_rows) : 0;
+        int scr_y = floor_screen_y - (half_h - down_strip_px);
 
         /* Use dedicated .pal if loaded; no fallback to WAD header because
          * sprite .pal format (15 levels × 32 × 2 bytes = 960) differs from
@@ -1714,7 +1717,8 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
                              obj_pal, obj_pal_size,
                              ptr_off, down_strip,
                              src_cols, src_rows,
-                             (int16_t)bright, vect_num);
+                             (int16_t)bright, vect_num,
+                             clip_top_y, clip_bot_y);
     }
 }
 

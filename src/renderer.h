@@ -273,7 +273,8 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
                           const uint8_t *pal, size_t pal_size,
                           uint32_t ptr_offset, uint16_t down_strip,
                           int src_cols, int src_rows,
-                          int16_t brightness, int sprite_type);
+                          int16_t brightness, int sprite_type,
+                          int32_t clip_top_sy, int32_t clip_bot_sy);
 void renderer_draw_gun(GameState *state);
 
 /* Get pointer to the current rendered frame for display */
