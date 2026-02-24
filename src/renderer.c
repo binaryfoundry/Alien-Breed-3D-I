@@ -2561,12 +2561,16 @@ void renderer_draw_display(GameState *state)
         r->wall_bot_clip = -1;
 
         /* Apply zone clipping from ListOfGraphRooms + LEVELCLIPS (portal clipping).
-         * Use the list we ordered from this frame (view_list_of_graph_rooms) so
-         * clip offsets match the current zone's list. */
+         * Defensive at grazing angles: stricter z, reject off-screen projection, fallback to full screen if invalid. */
         {
             const uint8_t *lgr = state->view_list_of_graph_rooms ?
                 state->view_list_of_graph_rooms : state->level.list_of_graph_rooms;
         if (lgr && state->level.clips) {
+            /* Tight: use points in front; only accept points that project onto/near screen. */
+            const int32_t zone_clip_min_z = 4;
+            const int sx_min = 0;
+            const int sx_max = g_renderer.width;
+
             /* Find this zone's entry in ListOfGraphRooms */
             int found = 0;
             while (rd16(lgr) >= 0) {
@@ -2582,43 +2586,48 @@ void renderer_draw_display(GameState *state)
                 if (clip_off >= 0) {
                     const uint8_t *clip_ptr = state->level.clips + clip_off * 2;
 
-                    /* Left clips: tighten leftclip.
-                     * Each entry is a point index. Only use points in front of near plane,
-                     * otherwise extreme projection can push left_clip and cause left-edge glitches. */
+                    /* Left clips: only use points in front and with sane screen x. */
                     while (rd16(clip_ptr) >= 0) {
                         int16_t pt = rd16(clip_ptr);
                         clip_ptr += 2;
                         if (pt >= 0 && pt < MAX_POINTS) {
-                            if (r->rotated[pt].z >= RENDERER_NEAR_PLANE) {
-                                int16_t sx = r->on_screen[pt].screen_x;
-                                if (sx > r->left_clip) {
-                                    r->left_clip = sx;
-                                }
+                            int32_t z = r->rotated[pt].z;
+                            int16_t sx = r->on_screen[pt].screen_x;
+                            if (z >= zone_clip_min_z && sx >= sx_min && sx <= sx_max && sx > r->left_clip) {
+                                r->left_clip = sx;
                             }
                         }
                     }
                     clip_ptr += 2; /* Skip -1 terminator */
 
-                    /* Right clips: tighten rightclip (same: only use points in front of near plane). */
+                    /* Right clips: same. */
                     while (rd16(clip_ptr) >= 0) {
                         int16_t pt = rd16(clip_ptr);
                         clip_ptr += 2;
                         if (pt >= 0 && pt < MAX_POINTS) {
-                            if (r->rotated[pt].z >= RENDERER_NEAR_PLANE) {
-                                int16_t sx = r->on_screen[pt].screen_x;
-                                if (sx < r->right_clip) {
-                                    r->right_clip = sx;
-                                }
+                            int32_t z = r->rotated[pt].z;
+                            int16_t sx = r->on_screen[pt].screen_x;
+                            if (z >= zone_clip_min_z && sx >= sx_min && sx <= sx_max && sx < r->right_clip) {
+                                r->right_clip = sx;
                             }
                         }
                     }
+
+                    /* Tight: use portal bounds as-is; clamp to screen only. */
+                    int left = (int)r->left_clip;
+                    int right = (int)r->right_clip;
+                    if (left < 0) left = 0;
+                    if (right > g_renderer.width) right = g_renderer.width;
+                    r->left_clip = (int16_t)left;
+                    r->right_clip = (int16_t)right;
                 }
             }
 
-            /* Skip if fully clipped */
-            if (r->left_clip >= g_renderer.width) continue;
-            if (r->right_clip <= 0) continue;
-            if (r->left_clip >= r->right_clip) continue;
+            /* At bad angles we can still get invalid clip; fallback to full screen instead of skipping the zone. */
+            if (r->left_clip >= g_renderer.width || r->right_clip <= 0 || r->left_clip >= r->right_clip) {
+                r->left_clip = 0;
+                r->right_clip = (int16_t)g_renderer.width;
+            }
         }
         }
 
