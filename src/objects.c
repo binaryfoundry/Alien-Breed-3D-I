@@ -130,13 +130,17 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params)
 
         /* Play death animation or remove */
         if (params->death_frames[0] >= 0) {
-            /* Set first death animation frame */
-            OBJ_SET_DEADH(obj, params->death_frames[0]);
+            /* Store original type so we can advance animation and render (type_data[0]=death index, [1]=original type) */
+            int8_t original_type = obj->obj.number;
+            obj->obj.type_data[0] = 0;   /* death frame index */
+            obj->obj.type_data[1] = original_type;
+            OBJ_SET_DEADH(obj, params->death_frames[0]);  /* first frame number to display */
             OBJ_SET_DEADL(obj, 0);
-            /* Mark as dying (objNumber stays, but special state) */
             obj->obj.number = OBJ_NBR_DEAD;
+            /* Keep zone so object is still processed for death advance and drawing */
+        } else {
+            OBJ_SET_ZONE(obj, -1); /* No animation: remove from active */
         }
-        OBJ_SET_ZONE(obj, -1); /* Remove from active objects */
         return true;
     }
 
@@ -559,27 +563,31 @@ void objects_update(GameState *state)
         case OBJ_NBR_GAS_PIPE:
             object_handle_gas_pipe(obj, state);
             break;
-        default:
-            /* Handle dying enemies with death animation (negative zone = dying) */
-            param_idx = obj_type_to_enemy_index(obj_type);
-            if (param_idx >= 0 && param_idx < num_enemy_types) {
-                const EnemyParams *ep = &enemy_params[param_idx];
-                /* Advance death animation frame */
-                int16_t dead_h = OBJ_DEADH(obj);
-                int16_t dead_l = OBJ_DEADL(obj);
-                dead_l += state->temp_frames;
-                if (dead_l >= 4) { /* advance every 4 frames */
-                    dead_l = 0;
-                    dead_h++;
-                    if (dead_h < 30 && ep->death_frames[dead_h] >= 0) {
-                        OBJ_SET_DEADH(obj, dead_h);
-                    } else {
-                        /* Animation done - mark object as fully dead */
-                        OBJ_SET_ZONE(obj, -1);
+        case OBJ_NBR_DEAD:
+            /* Advance death animation; original type stored in type_data[1] when we died */
+            {
+                int8_t original_type = obj->obj.type_data[1];
+                param_idx = obj_type_to_enemy_index(original_type);
+                if (param_idx >= 0 && param_idx < num_enemy_types) {
+                    const EnemyParams *ep = &enemy_params[param_idx];
+                    int8_t death_index = obj->obj.type_data[0];
+                    int16_t dead_l = OBJ_DEADL(obj);
+                    dead_l += state->temp_frames;
+                    if (dead_l >= 4) {
+                        dead_l = 0;
+                        death_index++;
+                        obj->obj.type_data[0] = death_index;
+                        if (death_index < 30 && ep->death_frames[death_index] >= 0) {
+                            OBJ_SET_DEADH(obj, ep->death_frames[death_index]);
+                        } else {
+                            OBJ_SET_ZONE(obj, -1); /* Animation done */
+                        }
                     }
+                    OBJ_SET_DEADL(obj, dead_l);
                 }
-                OBJ_SET_DEADL(obj, dead_l);
             }
+            break;
+        default:
             break;
         }
 

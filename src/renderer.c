@@ -1606,12 +1606,23 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         if (bright < 0) bright = 0;
 
         int8_t obj_number = (int8_t)obj[16];
-        if (obj_number == OBJ_NBR_DEAD) continue;
+        int16_t vect_num, frame_num;
+        int drawing_dead = 0;
+        if (obj_number == OBJ_NBR_DEAD) {
+            /* Death animation: original type in type_data[1]; death frame number in OBJ_DEADH (raw+8) */
+            int8_t original_type = (int8_t)obj[19];
+            if (original_type < 0 || original_type > 20) continue;
+            drawing_dead = 1;
+            obj_number = original_type;  /* for fallback and barrel check below */
+            vect_num = -1;               /* force fallback to get vect from type */
+            frame_num = rd16(obj + 8);   /* OBJ_DEADH = death animation frame */
+        } else {
+            vect_num = rd16(obj + 8);
+            frame_num = rd16(obj + 10);
+        }
 
         /* Resolve sprite graphic (vect_num). Fallback by obj_number when vect missing/invalid
          * or when level left vect 0 for a non-alien (so all enemies don't draw as alien). */
-        int16_t vect_num = rd16(obj + 8);
-        int16_t frame_num = rd16(obj + 10);
         int use_fallback = (vect_num < 0 || vect_num >= MAX_SPRITE_TYPES ||
                             !r->sprite_wad[vect_num] || !r->sprite_ptr[vect_num]);
         if (!use_fallback && vect_num == 0 && obj_number != OBJ_NBR_ALIEN &&
@@ -1641,7 +1652,7 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
                 case OBJ_NBR_FLAME_MARINE:    vect_num = 17; break;
                 default:                      vect_num = 0;  break;
             }
-            frame_num = 0;
+            if (!drawing_dead) frame_num = 0;
         }
         if (vect_num < 0 || vect_num >= MAX_SPRITE_TYPES) continue;
 
