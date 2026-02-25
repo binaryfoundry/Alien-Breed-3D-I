@@ -1354,6 +1354,9 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         SHOT_SET_GRAV(*bullet, gun->shot_gravity);
         SHOT_SET_FLAGS(*bullet, gun->shot_flags);
         SHOT_SET_ACCYPOS(*bullet, plr->yoff + 20 * 128); /* Shoot from chest height */
+        /* So projectile can hit enemies: object_handle_bullet checks NASTY_EFLAGS(*obj) */
+        NASTY_SET_EFLAGS(*bullet, enemy_flags);
+        SHOT_SIZE(*bullet) = (int8_t)gun_idx; /* correct hit sound and explosive force per gun */
     }
 }
 
