@@ -639,21 +639,6 @@ static void draw_wall_column(int x, int y_top, int y_bot,
 /* Reference Z used to project two-level zone split height to screen Y (same scale as orp->z). */
 #define TWO_LEVEL_SPLIT_REF_Z 400
 
-/* Deferred water spans: draw after ALL zones' opaque geometry (global list, depth-sorted). */
-#define MAX_DEFERRED_WATER_SPANS 4096
-typedef struct {
-    int16_t  y;
-    int16_t  x_left, x_right;
-    int32_t  floor_height;  /* rel_h for texture stepping */
-    int16_t  depth;         /* for back-to-front sort (larger = further) */
-    const uint8_t *texture;
-    int16_t  brightness;
-} DeferredWaterSpan;
-
-/* Global deferred water (accumulated across all zones, drawn after zone loop). */
-static DeferredWaterSpan s_deferred_water[MAX_DEFERRED_WATER_SPANS];
-static int s_num_deferred_water;
-
 /* -----------------------------------------------------------------------
  * Draw a wall segment between two rotated endpoints
  *
@@ -1943,7 +1928,6 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
 
 
     /* Amiga: draw walls and arcs in stream order (no deferral). */
-    /* Water: append to global s_deferred_water (drawn after all zones, depth-sorted). */
 
     int max_iter = 500; /* Safety limit */
 
@@ -2330,31 +2314,9 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 if (le < r->left_clip) le = (int16_t)r->left_clip;
                 if (re >= r->right_clip) re = (int16_t)(r->right_clip - 1);
                 if (le > re) continue;
-                if (entry_type == 7) {
-                    /* Water: defer to global list (drawn after all zones, depth-sorted). */
-                    if (s_num_deferred_water < MAX_DEFERRED_WATER_SPANS) {
-                        int row_dist = row - half_h;
-                        int abs_rd = (row_dist >= 0) ? row_dist : -row_dist;
-                        if (abs_rd <= 3) abs_rd = 4;
-                        int32_t dist = (int32_t)((int64_t)(rel_h >> WORLD_Y_FRAC_BITS) * r->proj_y_scale * RENDER_SCALE / abs_rd);
-                        if (dist < 1) dist = 1;
-                        if (dist > 32767) dist = 32767;
-                        int32_t span_depth = (floor_y_dist < 0) ? dist - 1 : dist;
-                        if (span_depth < 0) span_depth = 0;
-                        if (span_depth > 32767) span_depth = 32767;
-                        DeferredWaterSpan *ws = &s_deferred_water[s_num_deferred_water++];
-                        ws->y = (int16_t)row;
-                        ws->x_left = le;
-                        ws->x_right = re;
-                        ws->floor_height = rel_h;
-                        ws->depth = (int16_t)span_depth;
-                        ws->texture = floor_tex;
-                        ws->brightness = bright;
-                    }
-                } else {
-                    renderer_draw_floor_span((int16_t)row, le, re,
-                                             rel_h, floor_tex, bright, 0);
-                }
+                /* Water (entry_type 7) and floor drawn inline in stream order (Amiga itsafloordraw). */
+                renderer_draw_floor_span((int16_t)row, le, re,
+                                         rel_h, floor_tex, bright, (entry_type == 7) ? 1 : 0);
             }
             free(left_edge);
             free(right_edge_tab);
@@ -2591,7 +2553,6 @@ void renderer_draw_display(GameState *state)
      *
      * For each zone: apply LEVELCLIPS, then renderer_draw_zone (stream parse + draw).
      */
-    s_num_deferred_water = 0;
     for (int i = state->zone_order_count - 1; i >= 0; i--) {
         int16_t zone_id = state->zone_order_zones[i];
         if (zone_id < 0) continue;
@@ -2720,24 +2681,6 @@ void renderer_draw_display(GameState *state)
             }
         }
         renderer_draw_zone(state, zone_id, 0);
-    }
-
-    /* Draw all deferred water after every zone's opaque geometry (transparency ordering).
-     * Sort back-to-front (larger depth = further = draw first) so overlapping water blends correctly. */
-    for (int i = 1; i < s_num_deferred_water; i++) {
-        DeferredWaterSpan tmp = s_deferred_water[i];
-        int16_t tmp_d = tmp.depth;
-        int j = i - 1;
-        while (j >= 0 && s_deferred_water[j].depth < tmp_d) {
-            s_deferred_water[j + 1] = s_deferred_water[j];
-            j--;
-        }
-        s_deferred_water[j + 1] = tmp;
-    }
-    for (int i = 0; i < s_num_deferred_water; i++) {
-        DeferredWaterSpan *ws = &s_deferred_water[i];
-        renderer_draw_floor_span(ws->y, ws->x_left, ws->x_right,
-                                 ws->floor_height, ws->texture, ws->brightness, 1);
     }
 
     /* 6. Draw gun overlay */
