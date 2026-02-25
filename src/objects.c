@@ -1425,6 +1425,7 @@ void door_routine(GameState *state)
 
     uint8_t *door = state->level.door_data;
     int door_idx = 0;
+    printf("game_conditions: %d, \n", game_conditions);
 
     /* Iterate door entries (22 bytes each, terminated by -1). Same layout as lift: pos/top/bot (world *256). */
     while (1) {
@@ -1439,19 +1440,30 @@ void door_routine(GameState *state)
         int16_t timer = be16(door + 18);
         uint16_t door_flags = (uint16_t)be16(door + 20);
 
-        /* Type 0: flags 0 = player-only (space at door); flags != 0 = switch (open when condition bits set). */
+        /* Type 0: flags 0 = player-only (space at door); flags != 0 = condition (switch or key). */
         if (door_type == 0) {
             int satisfied;
+            int plr1_at = player_at_door_zone(state, zone_id, state->plr1.zone, door_idx, 0);
+            int plr2_at = player_at_door_zone(state, zone_id, state->plr2.zone, door_idx, 1);
+            int at_door = plr1_at || plr2_at;
+            int space_tap = (plr1_at && state->plr1.p_spctap) || (plr2_at && state->plr2.p_spctap);
+
             if (door_flags == 0) {
-                /* Player-only: open when player at door taps space; stay open while player remains at door. */
-                int plr1_at = player_at_door_zone(state, zone_id, state->plr1.zone, door_idx, 0);
-                int plr2_at = player_at_door_zone(state, zone_id, state->plr2.zone, door_idx, 1);
-                int at_door = plr1_at || plr2_at;
-                int space_tap = (plr1_at && state->plr1.p_spctap) || (plr2_at && state->plr2.p_spctap);
+                /* Player-only: open when player at door taps space; stay open while at door. */
                 satisfied = at_door && (space_tap || door_pos < door_bot);
             } else {
-                satisfied = ((uint16_t)game_conditions & door_flags) == door_flags;
+                int conditions_met = ((uint16_t)game_conditions & door_flags) == door_flags;
+                int switch_only_bits = 0x1E0u;
+                int key_bits = 0xE10u ;
+                int is_switch_door = (door_flags & key_bits) == 0 && (door_flags & switch_only_bits) != 0;
+                if (is_switch_door) {
+                    satisfied = conditions_met;
+                } else {
+                    /* Key (or mixed) door: must have condition and be at door and interact (or door already open). */
+                    satisfied = conditions_met && at_door && (space_tap || door_pos < door_bot);
+                }
             }
+
             const int32_t open_speed = -16;
             const int32_t close_speed = 4;
             if (satisfied) {
