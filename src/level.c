@@ -193,7 +193,10 @@ int level_parse(LevelState *level)
                     int out_idx = 0;
                     uint32_t wall_index = 0;
                     for (int i = 0; i < nd; i++) {
-                        int16_t bottom = read_word(s + 0), top = read_word(s + 2), curr = read_word(s + 4), dir = read_word(s + 6);
+                        int16_t bottom = read_word(s + 0);
+                        int16_t top = read_word(s + 2);
+                        int16_t curr = read_word(s + 4);
+                        int16_t dir = read_word(s + 6);
                         int16_t zone = read_word(s + 12);
                         int16_t cond = read_word(s + 14);
                         const uint8_t *wall_start = s + 18;
@@ -273,7 +276,10 @@ int level_parse(LevelState *level)
                     int out_idx = 0;
                     uint32_t wall_index = 0;
                     for (int i = 0; i < nl; i++) {
-                        int16_t bottom = read_word(s + 0), top = read_word(s + 2), curr = read_word(s + 4), dir = read_word(s + 6);
+                        int16_t bottom = read_word(s + 0);
+                        int16_t top = read_word(s + 2);
+                        int16_t curr = read_word(s + 4);
+                        int16_t dir = read_word(s + 6);
                         int16_t zone = read_word(s + 12);
                         int16_t conditions = read_word(s + 14);
                         const uint8_t *wall_start = s + 18;
