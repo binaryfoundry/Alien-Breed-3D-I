@@ -675,8 +675,8 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
     /* Both behind camera - skip */
     if (z1 <= 0 && z2 <= 0) return;
 
-    /* Switch walls: only draw when camera is on front of wall (one-sided). */
-    if (tex_id == SWITCHES_WALL_TEX_ID) {
+    /* Back-face cull: don't draw walls facing away from the camera (view-space cross product). */
+    {
         int32_t cross = (int32_t)x1 * (int32_t)z2 - (int32_t)x2 * (int32_t)z1;
         if (cross >= 0) return;
     }
@@ -1920,13 +1920,33 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 /* Original level height for texture step (before any door override). */
                 int16_t wall_height_for_tex = (int16_t)((botwall - topwall) >> 8);
                 if (wall_height_for_tex < 1) wall_height_for_tex = 1;
-                /* Door/lift override: clip wall to door opening or lift shaft and add V tex offset. Skip switch walls
-                 * (tex_id 11) so their Y texcoords stay correct; they are panels, not full-height doors.
-                 * Re-read zone roof/floor from level->data here so we see door_routine/lift_routine updates. */
                 int32_t door_yoff_add = 0;
-                if ((zone_has_door_flag || zone_has_lift_flag) && tex_id != SWITCHES_WALL_TEX_ID) {
-                    int32_t live_zone_roof = rd32(zone_data + 6);   /* ZD_ROOF: door/lift write this */
-                    int32_t live_zone_floor = rd32(zone_data + 2);   /* ZD_FLOOR */
+                int skip_this_wall = 0;
+
+                /* Lift zone: clip all walls to current zone floor/roof so we don't draw wall below the platform. */
+                if (zone_has_lift_flag && tex_id != SWITCHES_WALL_TEX_ID) {
+                    int32_t live_zone_roof = rd32(zone_data + 6);
+                    int32_t live_zone_floor = rd32(zone_data + 2);
+                    int32_t zone_roof_rel = live_zone_roof - y_off;
+                    int32_t zone_floor_rel = live_zone_floor - y_off;
+                    int32_t draw_top = topwall > zone_roof_rel ? topwall : zone_roof_rel;
+                    int32_t draw_bot = botwall < zone_floor_rel ? botwall : zone_floor_rel;
+                    if (draw_bot <= draw_top) {
+                        skip_this_wall = 1;
+                    } else {
+                        wall_top = (int16_t)(draw_top >> 8);
+                        wall_bot = (int16_t)(draw_bot >> 8);
+                        int32_t wall_full_h = botwall - topwall;
+                        if (wall_full_h > 0) {
+                            int rows = 1 << use_valshift;
+                            door_yoff_add = (int32_t)((int64_t)(draw_top - topwall) * rows / wall_full_h);
+                        }
+                    }
+                }
+                /* Door override: clip wall to door opening when wall matches zone extent (full-height door panel). */
+                else if (zone_has_door_flag && tex_id != SWITCHES_WALL_TEX_ID) {
+                    int32_t live_zone_roof = rd32(zone_data + 6);
+                    int32_t live_zone_floor = rd32(zone_data + 2);
                     int32_t zone_roof_rel = live_zone_roof - y_off;
                     int32_t zone_floor_rel = live_zone_floor - y_off;
                     int32_t top_abs = topwall + y_off, bot_abs = botwall + y_off;
@@ -1957,12 +1977,13 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                     r->cur_wall_pal = r->wall_palettes[tex_id];
                 else
                     r->cur_wall_pal = NULL;
-                renderer_draw_wall(rx1, rz1, rx2, rz2,
-                                  wall_top, wall_bot,
-                                  wall_tex, leftend, rightend,
-                                  wall_bright, use_valand, use_valshift, horand,
-                                  eff_totalyoff, eff_fromtile, tex_id,
-                                  wall_height_for_tex);
+                if (!skip_this_wall)
+                    renderer_draw_wall(rx1, rz1, rx2, rz2,
+                                      wall_top, wall_bot,
+                                      wall_tex, leftend, rightend,
+                                      wall_bright, use_valand, use_valshift, horand,
+                                      eff_totalyoff, eff_fromtile, tex_id,
+                                      wall_height_for_tex);
             }
             ptr += 28;
             break;

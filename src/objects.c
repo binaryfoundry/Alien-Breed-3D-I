@@ -1504,7 +1504,7 @@ void lift_routine(GameState *state)
         if (zone_id >= 0 && zone_id < state->level.num_zones)
         {
             level_set_zone_floor(&state->level, (int16_t)zone_id, lift_pos);
-            level_set_zone_roof(&state->level, (int16_t)zone_id, lift_bot);
+            level_set_zone_roof(&state->level, (int16_t)zone_id, lift_top);
         }
 
         /* Accumulate max floor per zone (×64) for apply and player Y. */
