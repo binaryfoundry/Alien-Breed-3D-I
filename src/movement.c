@@ -416,12 +416,13 @@ static int check_wall_line(MoveContext* ctx, LevelState* level,
     }
 
     /* ---- Wall collision with extents ----
-     * Treat mover as a circle of radius ctx->extlen (scaled by pos_shift).
+     * Treat mover as a circle of radius (ctx->extlen / 2) so small gaps are passable.
      * If extlen == 0, fall back to old point-crossing behavior.
      */
     {
         int32_t ext = ctx->extlen;
         if (ext < 0) ext = 0;
+        ext = ext / 2;  /* use half extlen for wall radius */
 
         if (ext == 0) {
             /* Point-crossing fallback (your previous behavior). */
