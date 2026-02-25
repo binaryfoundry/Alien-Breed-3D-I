@@ -1492,7 +1492,7 @@ void lift_routine(GameState *state)
             } else if (lift_pos <= lift_top) {
                 lift_vel = up_speed;
             }
-            lift_pos += (int32_t)lift_vel * state->temp_frames * 256;
+            lift_pos += (int32_t)lift_vel * state->temp_frames * 64;
             if (lift_pos < lift_top) lift_pos = lift_top;
             if (lift_pos > lift_bot) lift_pos = lift_bot;
             if (lift_pos == lift_top || lift_pos == lift_bot) lift_vel = 0;
@@ -1501,11 +1501,11 @@ void lift_routine(GameState *state)
         wbe32(lift + 4, lift_pos);
         wbe16(lift + 8, lift_vel);
 
-        /* Lifts use ×256 internally; doors use ×64 for ZD_ROOF and wall. Convert lift to ×64 for zone and wall. */
-        int32_t lift_pos_64 = (lift_pos) >> 3;
-
         if (zone_id >= 0 && zone_id < state->level.num_zones)
-            level_set_zone_floor(&state->level, (int16_t)zone_id, lift_pos_64);
+        {
+            level_set_zone_floor(&state->level, (int16_t)zone_id, lift_pos);
+            level_set_zone_roof(&state->level, (int16_t)zone_id, lift_bot);
+        }
 
         /* Accumulate max floor per zone (×64) for apply and player Y. */
         /*if (zone_id >= 0 && zone_id < state->level.num_zones && (unsigned)zone_id < 256u) {
@@ -1528,14 +1528,11 @@ void lift_routine(GameState *state)
                 int32_t gfx_off = (int32_t)be32(ent + 2);
                 if (state->level.floor_lines && fline >= 0 && (int32_t)fline < state->level.num_floor_lines) {
                     uint8_t *fl = state->level.floor_lines + (uint32_t)(int16_t)fline * 16u;
-                    //wbe16(fl + 14, (int16_t)(uint16_t)0x8000); // TODO read old value for hit sound
+                    wbe16(fl + 14, (int16_t)(uint16_t)0x8000); // TODO read old value for hit sound
                 }
                 if (gfx_off >= 0) {
                     uint8_t *wall_rec = state->level.graphics + (uint32_t)gfx_off;
-                    wbe32(wall_rec + 22, lift_pos_64);   /* botofwall = lift floor (×64, same scale as door) */
-                    wbe32(wall_rec + 20, lift_bot >> 3);
-                    int16_t yoff = (int16_t)((uint16_t)((-(lift_pos_64 >> 7)) & 0xFFu));  /* match door yoff formula */
-                    //wbe16(wall_rec + 10, yoff);
+                    wbe32(wall_rec + 20, lift_pos);
                 }
             }
         }

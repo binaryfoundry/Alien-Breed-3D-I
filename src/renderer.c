@@ -1804,6 +1804,8 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
     RendererState *r = &g_renderer;
     LevelState *level = &state->level;
 
+    if (use_upper) return;  /* upper zone rendering disabled */
+
     if (!level->data || !level->zone_adds || !level->zone_graph_adds) return;
 
     /* Get zone data (same level->data that door_routine/lift_routine write to each frame). */
