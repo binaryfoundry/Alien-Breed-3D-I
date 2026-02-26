@@ -1766,14 +1766,6 @@ void switch_routine(GameState *state)
                 printf("[SWITCH] pressed (plr1) zone=%d bit_mask=0x%04X game_conditions=0x%04X\n",
                        (int)zone_id, (unsigned)(uint16_t)bit_mask, (unsigned)(uint16_t)game_conditions);
                 *(int8_t*)(sw + 3) = 20; /* cooldown */
-                /* Patch switch wall: only flip bit 1 (on/off); preserve point index in first word */
-                if (state->level.graphics) {
-                    int32_t gfx_off = (int32_t)be32(sw + 6);
-                    uint8_t *wall_ptr = state->level.graphics + gfx_off;
-                    int16_t w = be16(wall_ptr);
-                    w = (int16_t)((w & ~2) | ((game_conditions & bit_mask) ? 2 : 0));
-                    write_be16(wall_ptr, w);
-                }
                 audio_play_sample(10, 50);
             }
             if (state->plr2.p_spctap && near_plr2) {
@@ -1781,13 +1773,6 @@ void switch_routine(GameState *state)
                 printf("[SWITCH] pressed (plr2) zone=%d bit_mask=0x%04X game_conditions=0x%04X\n",
                        (int)zone_id, (unsigned)(uint16_t)bit_mask, (unsigned)(uint16_t)game_conditions);
                 *(int8_t*)(sw + 3) = 20;
-                if (state->level.graphics) {
-                    int32_t gfx_off = (int32_t)be32(sw + 6);
-                    uint8_t *wall_ptr = state->level.graphics + gfx_off;
-                    int16_t w = be16(wall_ptr);
-                    w = (int16_t)((w & ~2) | ((game_conditions & bit_mask) ? 2 : 0));
-                    write_be16(wall_ptr, w);
-                }
                 audio_play_sample(10, 50);
             }
         }

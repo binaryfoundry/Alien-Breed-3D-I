@@ -2037,8 +2037,6 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                  * Use V offset 0 for switches so full texture maps consistently. */
                 int16_t eff_totalyoff = (tex_id == SWITCHES_WALL_TEX_ID) ? 0 : (int16_t)(totalyoff + door_yoff_add);
                 int16_t eff_fromtile   = fromtile;
-                if (tex_id == SWITCHES_WALL_TEX_ID && (p1 & 2))
-                    eff_fromtile = (int16_t)(fromtile + 32);
 
                 if (tex_id >= 0 && tex_id < MAX_WALL_TILES)
                     r->cur_wall_pal = r->wall_palettes[tex_id];
