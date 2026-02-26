@@ -42,8 +42,9 @@ static inline int reg_btst32(uint32_t value, unsigned int bit_index)
 #define FLINE_XLEN    FLINE_WORD4
 #define FLINE_ZLEN    FLINE_WORD6
 #define FLINE_CONNECT 8
+#define FLINE_DIVISOR 10   /* Amiga divs 10(a2) for crossing height */
 
-/* Zone data offsets */
+/* Zone data offsets (Defs.i ToZoneFloor etc.) */
 #define ZONE_FLOOR_HEIGHT   2
 #define ZONE_ROOF_HEIGHT    6
 #define ZONE_UPPER_FLOOR    10
@@ -229,18 +230,13 @@ void order_zones(ZoneOrder *out, const LevelState *level,
 }
 
 /* -----------------------------------------------------------------------
- * can_it_be_seen - Line-of-sight check
+ * can_it_be_seen - Line-of-sight (ObjectMove.s CanItBeSeen)
  *
- * Translated from AB3DI.s CanItBeSeen.
- *
- * Algorithm:
- * 1. If same room -> visible
- * 2. Trace line from viewer to target through room graph
- * 3. At each room boundary, check:
- *    a. Does the line cross an exit line?
- *    b. Is there floor/ceiling clearance at the crossing point?
- * 4. If we reach the target's room -> visible
- * 5. If we run out of rooms to check -> not visible
+ * 1. Same room: visible only if viewer_top == target_top.
+ * 2. Else: to_room must be in from_room list-of-graph (when graph available).
+ * 3. Clip points: left/right clip test when clips/points available.
+ * 4. GoThroughZones: exit cross test, crossing height (fline+10 divisor),
+ *    clearance vs current room (ViewerTop), GotIn (entry_top), target_top at end.
  * ----------------------------------------------------------------------- */
 uint8_t can_it_be_seen(const LevelState *level,
                        const uint8_t *from_room, const uint8_t *to_room,
@@ -252,86 +248,151 @@ uint8_t can_it_be_seen(const LevelState *level,
         return 0;
     }
 
-    /* Same room = always visible */
+    /* Same room (insameroom): visible only if same floor */
     if (from_room == to_room) {
-        return 0x03; /* Both bits set */
+        return (viewer_top == target_top) ? 0x03u : 0u;
     }
 
-    /* Trace through rooms */
-    int32_t dy = target_y - viewer_y;
+    if (!level->zone_adds) return 0;
 
+    int16_t to_zone_id = read_be16(to_room);
+    const uint8_t *list = from_room + ZONE_LIST_OF_GRAPH;
+    bool in_list = false;
+    int16_t clip_off = -1;
+
+    /* InList: is to_room in from_room's list-of-graph? */
+    if (level->zone_graph_adds && level->graphics) {
+        const uint8_t *entry = list;
+        for (int i = 0; i < 256; i++) {
+            int16_t list_index = read_be16(entry);
+            if (list_index < 0) break;
+            uint32_t gfx_off = (uint32_t)read_be32(level->zone_graph_adds + (unsigned)list_index * 8u);
+            int16_t entry_zone_id = read_be16(level->graphics + gfx_off);
+            if (entry_zone_id == to_zone_id) {
+                in_list = true;
+                clip_off = read_be16(entry + 2);
+                break;
+            }
+            entry += 8;
+        }
+        if (!in_list) return 0;
+    } else {
+        /* No graph data: allow and skip clip check (fallback) */
+        in_list = true;
+    }
+
+    int32_t dx = (int32_t)target_x - (int32_t)viewer_x;
+    int32_t dz = (int32_t)target_z - (int32_t)viewer_z;
+
+    /* Clip check (left/right) when clips/points available */
+    if (in_list && clip_off >= 0 && level->clips && level->points) {
+        const uint8_t *clip_ptr = level->clips + (unsigned)clip_off * 2u;
+        for (;;) {
+            int16_t pt_idx = read_be16(clip_ptr);
+            if (pt_idx < 0) break;
+            int16_t px = read_be16(level->points + (unsigned)pt_idx * 4u);
+            int16_t pz = read_be16(level->points + (unsigned)pt_idx * 4u + 2u);
+            int32_t cross = ((int32_t)px - (int32_t)viewer_x) * dz - ((int32_t)pz - (int32_t)viewer_z) * dx;
+            if (cross <= 0) return 0;
+            clip_ptr += 2;
+        }
+        clip_ptr += 2;
+        for (;;) {
+            int16_t pt_idx = read_be16(clip_ptr);
+            if (pt_idx < 0) break;
+            int16_t px = read_be16(level->points + (unsigned)pt_idx * 4u);
+            int16_t pz = read_be16(level->points + (unsigned)pt_idx * 4u + 2u);
+            int32_t cross = ((int32_t)px - (int32_t)viewer_x) * dz - ((int32_t)pz - (int32_t)viewer_z) * dx;
+            if (cross >= 0) return 0;
+            clip_ptr += 2;
+        }
+    }
+
+    /* GoThroughZones */
+    int32_t dy = (int32_t)target_y - (int32_t)viewer_y;
     const uint8_t *current_room = from_room;
-    int max_depth = 20; /* Prevent infinite loops */
+    int8_t d2 = viewer_top;
+    int max_depth = 20;
 
     for (int depth = 0; depth < max_depth; depth++) {
-        if (!current_room) break;
-
-        /* Get exit list for current room (16-bit relative offset) */
         int16_t exit_rel = read_be16(current_room + ZONE_EXIT_LIST);
         if (exit_rel == 0) break;
 
         const uint8_t *exit_list = current_room + exit_rel;
-        bool found_next = false;
+        bool found_exit = false;
 
-        /* Check each exit line */
         for (int i = 0; i < 50; i++) {
             int16_t line_idx = read_be16(exit_list + i * 2);
             if (line_idx < 0) break;
 
-            const uint8_t *fline = level->floor_lines + line_idx * FLINE_SIZE;
-
+            const uint8_t *fline = level->floor_lines + (unsigned)line_idx * (unsigned)FLINE_SIZE;
             int16_t lx = read_be16(fline + FLINE_X);
             int16_t lz = read_be16(fline + FLINE_Z);
             int16_t lxlen = read_be16(fline + FLINE_XLEN);
             int16_t lzlen = read_be16(fline + FLINE_ZLEN);
             int16_t connect = read_be16(fline + FLINE_CONNECT);
 
-            if (connect < 0) continue;
+            int32_t d3 = (int32_t)viewer_x - (int32_t)lx;
+            int32_t d4 = (int32_t)viewer_z - (int32_t)lz;
+            int32_t view_side = d3 * (int32_t)lzlen - d4 * (int32_t)lxlen;
+            if (view_side <= 0) continue;
 
-            /* Check if line from viewer to target crosses this exit */
-            int32_t view_cross = (int32_t)((int32_t)viewer_x - lx) * lzlen -
-                                 (int32_t)((int32_t)viewer_z - lz) * lxlen;
-            int32_t targ_cross = (int32_t)((int32_t)target_x - lx) * lzlen -
-                                 (int32_t)((int32_t)target_z - lz) * lxlen;
+            int32_t d5 = d3 + (int32_t)lxlen;
+            int32_t d6 = d4 + (int32_t)lzlen;
+            int32_t targ_side = d5 * (int32_t)lzlen - d6 * (int32_t)lxlen;
+            if (targ_side >= 0) continue;
 
-            /* Signs differ = line crosses */
-            if ((view_cross ^ targ_cross) < 0) {
-                /* Calculate crossing height */
-                int32_t total_cross = view_cross - targ_cross;
-                if (total_cross == 0) continue;
+            if (connect < 0) return 0;
 
-                int32_t t = (view_cross * 256) / total_cross; /* 0-256 = 0.0-1.0 */
-                int32_t cross_y = viewer_y + (dy * t) / 256;
-
-                /* Get connected zone */
-                int32_t zone_off = read_be32(level->zone_adds + connect * 4);
-                const uint8_t *next_zone = level->data + zone_off;
-
-                /* Check height clearance (using upper floor if in_top) */
-                int32_t floor_h, roof_h;
-                if (viewer_top || target_top) {
-                    /* Check upper floor */
-                    floor_h = read_be32(next_zone + ZONE_OFF_UPPER_FLOOR);
-                    roof_h = read_be32(next_zone + ZONE_OFF_UPPER_ROOF);
-                } else {
-                    floor_h = read_be32(next_zone + ZONE_FLOOR_HEIGHT);
-                    roof_h = read_be32(next_zone + ZONE_ROOF_HEIGHT);
-                }
-
-                if (cross_y >= floor_h && cross_y <= roof_h) {
-                    /* Can pass through */
-                    if (next_zone == to_room) {
-                        return 0x03; /* Visible! */
-                    }
-                    current_room = next_zone;
-                    found_next = true;
-                    break;
-                }
+            int16_t divisor = read_be16(fline + FLINE_DIVISOR);
+            if (divisor == 0) divisor = 1;
+            int32_t num_t = (int32_t)(target_x - lx) * (int32_t)lzlen - (int32_t)(target_z - lz) * (int32_t)lxlen;
+            int32_t num_v = (int32_t)(viewer_x - lx) * (int32_t)lzlen - (int32_t)(viewer_z - lz) * (int32_t)lxlen;
+            num_t /= (int32_t)divisor;
+            num_v /= (int32_t)divisor;
+            int32_t den = num_t + num_v;
+            int32_t cross_y_16 = (int16_t)viewer_y;
+            if (den != 0) {
+                int32_t frac = (int32_t)dy * num_v / den;
+                cross_y_16 = (int16_t)viewer_y + (int16_t)frac;
             }
-        }
+            int32_t cross_y = (int32_t)cross_y_16 << 7;
 
-        if (!found_next) break;
+            int32_t floor_h = read_be32(current_room + ZONE_FLOOR_HEIGHT);
+            int32_t roof_h = read_be32(current_room + ZONE_ROOF_HEIGHT);
+            if (d2) {
+                floor_h = read_be32(current_room + ZONE_UPPER_FLOOR);
+                roof_h = read_be32(current_room + ZONE_UPPER_ROOF);
+            }
+            if (cross_y < roof_h || cross_y > floor_h) continue;
+
+            int32_t next_off = read_be32(level->zone_adds + (unsigned)connect * 4u);
+            const uint8_t *next_zone = level->data + next_off;
+
+            int32_t next_floor = read_be32(next_zone + ZONE_FLOOR_HEIGHT);
+            int32_t next_roof = read_be32(next_zone + ZONE_ROOF_HEIGHT);
+            int8_t entry_top = 0;
+            if (cross_y > next_floor) return 0;
+            if (cross_y <= next_roof) {
+                entry_top = 0;
+            } else {
+                int32_t up_floor = read_be32(next_zone + ZONE_UPPER_FLOOR);
+                int32_t up_roof = read_be32(next_zone + ZONE_UPPER_ROOF);
+                if (cross_y > up_floor) return 0;
+                if (cross_y < up_roof) return 0;
+                entry_top = 1;
+            }
+
+            if (next_zone == to_room) {
+                return (entry_top == target_top) ? 0x03u : 0u;
+            }
+            current_room = next_zone;
+            d2 = entry_top;
+            found_exit = true;
+            break;
+        }
+        if (!found_exit) break;
     }
 
-    return 0; /* Not visible */
+    return 0;
 }
