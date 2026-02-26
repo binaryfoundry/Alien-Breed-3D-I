@@ -48,6 +48,7 @@ void order_zones(ZoneOrder *out, const LevelState *level,
  */
 uint8_t can_it_be_seen(const LevelState *level,
                        const uint8_t *from_room, const uint8_t *to_room,
+                       int16_t to_zone_id,
                        int16_t viewer_x, int16_t viewer_z, int16_t viewer_y,
                        int16_t target_x, int16_t target_z, int16_t target_y,
                        int8_t viewer_top, int8_t target_top);

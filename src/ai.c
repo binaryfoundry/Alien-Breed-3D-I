@@ -6,6 +6,7 @@
  */
 
 #include "ai.h"
+#include "level.h"
 #include "objects.h"
 #include "game_data.h"
 #include "movement.h"
@@ -210,14 +211,8 @@ void ai_control(GameObject *obj, GameState *state, const AIParams *params)
     int16_t self_zone = OBJ_ZONE(obj);
     if (self_zone < 0) return;
 
-    /* Get self room pointer */
-    int32_t self_zone_off = 0;
-    {
-        const uint8_t *za = level->zone_adds;
-        self_zone_off = (int32_t)((za[self_zone*4] << 24) | (za[self_zone*4+1] << 16) |
-                        (za[self_zone*4+2] << 8) | za[self_zone*4+3]);
-    }
-    const uint8_t *from_room = level->data + self_zone_off;
+    const uint8_t *from_room = level_get_zone_data_ptr(level, self_zone);
+    if (!from_room) return;
 
     /* ---- BuildVisibleList ---- */
     int num_friends = 1; /* count self */
@@ -254,17 +249,18 @@ void ai_control(GameObject *obj, GameState *state, const AIParams *params)
         int16_t other_x, other_z;
         ai_get_obj_pos(level, obj_idx, &other_x, &other_z);
 
-        int32_t ozone_off = 0;
-        {
-            const uint8_t *za = level->zone_adds;
-            ozone_off = (int32_t)((za[other_zone*4] << 24) | (za[other_zone*4+1] << 16) |
-                        (za[other_zone*4+2] << 8) | za[other_zone*4+3]);
+        const uint8_t *to_room = level_get_zone_data_ptr(level, other_zone);
+        if (!to_room) {
+            obj_idx++;
+            continue;
         }
-        const uint8_t *to_room = level->data + ozone_off;
 
-        uint8_t vis = can_it_be_seen(level, from_room, to_room,
-                                     self_x, self_z, 0,
-                                     other_x, other_z, 0,
+        /* Amiga: Viewery = 4(a0), Targety = 4(a2) — Y in >>7 scale for crossing height */
+        int16_t viewer_y = (int16_t)obj_w(obj->raw + 4);
+        int16_t target_y = (int16_t)obj_w(other->raw + 4);
+        uint8_t vis = can_it_be_seen(level, from_room, to_room, other_zone,
+                                     self_x, self_z, viewer_y,
+                                     other_x, other_z, target_y,
                                      obj->obj.in_top, other->obj.in_top);
 
         if (!vis) {

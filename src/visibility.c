@@ -7,6 +7,7 @@
 
 #include "visibility.h"
 #include "math_tables.h"
+#include <stdio.h>
 #include <string.h>
 
 /* -----------------------------------------------------------------------
@@ -240,6 +241,7 @@ void order_zones(ZoneOrder *out, const LevelState *level,
  * ----------------------------------------------------------------------- */
 uint8_t can_it_be_seen(const LevelState *level,
                        const uint8_t *from_room, const uint8_t *to_room,
+                       int16_t to_zone_id,
                        int16_t viewer_x, int16_t viewer_z, int16_t viewer_y,
                        int16_t target_x, int16_t target_z, int16_t target_y,
                        int8_t viewer_top, int8_t target_top)
@@ -255,30 +257,44 @@ uint8_t can_it_be_seen(const LevelState *level,
 
     if (!level->zone_adds) return 0;
 
-    int16_t to_zone_id = read_be16(to_room);
+    /* to_zone_id is the target's zone id (caller passes it; do not read from to_room) */
     const uint8_t *list = from_room + ZONE_LIST_OF_GRAPH;
     bool in_list = false;
     int16_t clip_off = -1;
 
-    /* InList: is to_room in from_room's list-of-graph? */
-    if (level->zone_graph_adds && level->graphics) {
+    /* InList: is to_room in from_room's list-of-graph?
+     * Support two formats: (1) Direct: first word = zone id (stub_io). (2) Amiga: first word = graph index -> zone id from graphics. */
+    {
         const uint8_t *entry = list;
         for (int i = 0; i < 256; i++) {
-            int16_t list_index = read_be16(entry);
-            if (list_index < 0) break;
-            uint32_t gfx_off = (uint32_t)read_be32(level->zone_graph_adds + (unsigned)list_index * 8u);
-            int16_t entry_zone_id = read_be16(level->graphics + gfx_off);
-            if (entry_zone_id == to_zone_id) {
+            int16_t word0 = read_be16(entry);
+            if (word0 < 0) break;
+
+            /* Direct format: first word is zone id */
+            if (word0 == to_zone_id) {
                 in_list = true;
                 clip_off = read_be16(entry + 2);
                 break;
             }
+
+            /* Amiga format: first word is graph index -> zone id from graphics */
+            if (level->zone_graph_adds && level->graphics) {
+                uint32_t gfx_off = (uint32_t)read_be32(level->zone_graph_adds + (unsigned)word0 * 8u);
+                int16_t entry_zone_id = read_be16(level->graphics + gfx_off);
+                if (entry_zone_id == to_zone_id) {
+                    in_list = true;
+                    clip_off = read_be16(entry + 2);
+                    break;
+                }
+            }
+
             entry += 8;
         }
-        if (!in_list) return 0;
-    } else {
-        /* No graph data: allow and skip clip check (fallback) */
-        in_list = true;
+        if (!in_list) {
+            if (level->zone_graph_adds && level->graphics)
+                return 0;
+            in_list = true; /* fallback when no graph data */
+        }
     }
 
     int32_t dx = (int32_t)target_x - (int32_t)viewer_x;
