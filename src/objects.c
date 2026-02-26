@@ -22,6 +22,9 @@
 #include <string.h>
 #include <stdlib.h>
 
+/* Set to 1 to disable all enemy AI (movement, attack, wander); worry countdown and floor settling kept. */
+#define AI_DISABLED 1
+
 #define LIFT_ENTRY_SIZE 20
 
 /* Big-endian read/write helpers (Amiga data is big-endian) */
@@ -386,6 +389,8 @@ static void enemy_generic(GameObject *obj, GameState *state, int param_index)
     int8_t lives = NASTY_LIVES(*obj);
     if (lives <= 0) return;
 
+    if (AI_DISABLED) return;
+
     /* Check visibility */
     int8_t can_see = obj->obj.can_see;
 
@@ -686,6 +691,8 @@ void object_handle_marine(GameObject *obj, GameState *state)
     int8_t lives = NASTY_LIVES(*obj);
     if (lives <= 0) return;
 
+    if (AI_DISABLED) return;
+
     /* Run AI control (from AI.s ItsAMarine) */
     AIParams ai;
     ai.aggression = 15;
@@ -745,6 +752,8 @@ void object_handle_flying_nasty(GameObject *obj, GameState *state)
 
     int8_t lives = NASTY_LIVES(*obj);
     if (lives <= 0) return;
+
+    if (AI_DISABLED) return;
 
     /* Continuous rotation */
     int16_t facing = NASTY_FACING(*obj);
