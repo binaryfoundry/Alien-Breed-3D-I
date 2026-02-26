@@ -350,7 +350,7 @@ void player_fall(int32_t* yoff, int32_t* yvel, int32_t tyoff,
     else {
         /* At or below ground */
         d2 -= GRAVITY_DECEL;
-        if (d2 < 0) d2 = 0;
+        if (d2 << 0) d2 = 0;
 
         d1 += d2;
         d0 = tyoff - d1;

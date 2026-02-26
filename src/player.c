@@ -830,7 +830,7 @@ static void player_full_control(PlayerState *plr, GameState *state, int plr_num)
 
         /* When we just transitioned zones (e.g. stepped onto stairs), snap Y to new floor
          * immediately so we stand on the step instead of smoothing through it. */
-        if (plr->zone != prev_zone) {
+        if (plr->zone != prev_zone && plr->s_tyoff < plr->s_yoff) {
             plr->s_yoff = plr->s_tyoff;
             plr->s_yvel = 0;
         }
