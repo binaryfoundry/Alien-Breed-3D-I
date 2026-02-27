@@ -468,11 +468,6 @@ void objects_update(GameState *state)
             obj_index++;
             continue;
         }
-        /* Only process player objects; skip all others (enemies, pickups, etc.). */
-        if (obj->obj.number != OBJ_NBR_PLR1 && obj->obj.number != OBJ_NBR_PLR2) {
-            obj_index++;
-            continue;
-        }
 
         /* Check worry flag */
         if (obj->obj.worry == 0) {

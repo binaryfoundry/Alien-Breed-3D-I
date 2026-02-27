@@ -1610,10 +1610,6 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
 
         if ((unsigned)pt_num >= (unsigned)num_pts) continue; /* invalid point number */
 
-        /* Only draw player objects; skip all others. */
-        int8_t obj_type = (int8_t)obj[16];
-        if (obj_type != OBJ_NBR_PLR1 && obj_type != OBJ_NBR_PLR2) continue;
-
         /* Only draw objects that are currently in this zone (obj_zone is updated by movement). */
         int16_t obj_zone = rd16(obj + 12);
         int in_this_zone = (obj_zone >= 0 && obj_zone == (int16_t)zone_id);
