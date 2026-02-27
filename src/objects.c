@@ -589,12 +589,11 @@ void objects_update(GameState *state)
                     dead_l += state->temp_frames;
                     if (dead_l >= 1) {
                         dead_l = 0;
-                        death_index++;
-                        obj->obj.type_data[0] = death_index;
-                        if (death_index < 30 && ep->death_frames[death_index] >= 0) {
+                        /* Only advance if next frame is valid; otherwise keep showing last frame (don't remove) */
+                        if (death_index + 1 < 30 && ep->death_frames[death_index + 1] >= 0) {
+                            death_index++;
+                            obj->obj.type_data[0] = death_index;
                             OBJ_SET_DEADH(obj, ep->death_frames[death_index]);
-                        } else {
-                            OBJ_SET_ZONE(obj, -1); /* Animation done */
                         }
                     }
                     OBJ_SET_DEADL(obj, dead_l);
