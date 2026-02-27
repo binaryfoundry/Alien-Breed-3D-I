@@ -1167,12 +1167,8 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
     int sx, sy;
 
     /* Brightness → palette byte offset via objscalecols (ObjDraw3.ChipRam.s line 572).
-     * Raw d6 = (z>>7) + obj_bright is passed in as 'brightness'.
-     * Apply a minimum so sprites stay visible (original often too dark on PC). */
-    int bright_idx = brightness;
-    if (bright_idx < 0) bright_idx = 0;
-    if (bright_idx < SPRITE_BRIGHT_MIN) bright_idx = SPRITE_BRIGHT_MIN;
-    if (bright_idx >= (int)OBJ_SCALE_COLS_SIZE) bright_idx = (int)OBJ_SCALE_COLS_SIZE - 1;
+     * Disabled: force full brightness (0) so sprites are not dimmed by distance. */
+    int bright_idx = 0;
     uint32_t pal_level_off = obj_scale_cols[bright_idx];
     if (pal && pal_size < 960) pal_level_off = 0;  /* single-level or small palette */
     int gray = (bright_idx * 255) / 62;
