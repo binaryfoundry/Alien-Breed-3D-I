@@ -1547,9 +1547,10 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
 
     int32_t y_off = r->yoff;
 
-    /* Build depth-sorted list of objects in this zone (and on this floor when level_filter >= 0) */
+    /* Build depth-sorted list of objects in this zone (and on this floor when level_filter >= 0).
+     * idx 0..79 = object_data; idx 80..99 = nasty_shot_data slot (bullets/gibs). */
     typedef struct { int idx; int32_t z; } ObjEntry;
-    ObjEntry objs[80];
+    ObjEntry objs[100];
     int obj_count = 0;
 
     int num_pts = level->num_object_points;
@@ -1560,7 +1561,7 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
 
     /* Iterate by object index; each object has point number at offset 0 (ObjDraw: move.w (a0)+,d0).
      * Use that to look up ObjRotated[pt_num] so keys and other pickups use correct position/z. */
-    for (int obj_idx = 0; obj_idx < 80 && obj_count < 80; obj_idx++) {
+    for (int obj_idx = 0; obj_idx < 80 && obj_count < 100; obj_idx++) {
         const uint8_t *obj = level->object_data + obj_idx * OBJECT_SIZE;
         int16_t pt_num = rd16(obj);
         if (pt_num < 0) break; /* End of object list */
@@ -1586,6 +1587,24 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         objs[obj_count].idx = obj_idx;
         objs[obj_count].z = orp->z;
         obj_count++;
+    }
+
+    /* Add nasty_shot_data bullets/gibs (same zone, depth-sorted with level objects). */
+    if (level->nasty_shot_data && obj_count < 100) {
+        const uint8_t *shots = level->nasty_shot_data;
+        for (int slot = 0; slot < 20 && obj_count < 100; slot++) {
+            const uint8_t *obj = shots + slot * OBJECT_SIZE;
+            if (rd16(obj + 12) < 0) continue; /* OBJ_ZONE */
+            if ((int8_t)obj[16] != OBJ_NBR_BULLET) continue;
+            int16_t pt_num = rd16(obj);
+            if (pt_num < 0 || (unsigned)pt_num >= (unsigned)num_pts) continue;
+            if (rd16(obj + 12) != (int16_t)zone_id) continue;
+            ObjRotatedPoint *orp = &r->obj_rotated[pt_num];
+            if (orp->z <= 0) continue;
+            objs[obj_count].idx = 80 + slot;
+            objs[obj_count].z = orp->z;
+            obj_count++;
+        }
     }
 
     /* Sort by Z (farthest first - painter's algorithm) */
@@ -1614,7 +1633,9 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
      */
     for (int oi = 0; oi < obj_count; oi++) {
         int obj_idx = objs[oi].idx;
-        const uint8_t *obj = level->object_data + obj_idx * OBJECT_SIZE;
+        const uint8_t *obj = (obj_idx < 80)
+            ? (level->object_data + obj_idx * OBJECT_SIZE)
+            : (level->nasty_shot_data + (obj_idx - 80) * OBJECT_SIZE);
         /* ObjDraw3: cmp.b #$ff,6(a0); bne BitMapObj → 3D/polygon objects have obj[6]==OBJ_3D_SPRITE. Skip for now. */
         if ((uint8_t)obj[6] == (uint8_t)OBJ_3D_SPRITE) continue;
 
@@ -1777,13 +1798,14 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         int16_t cam_z = r->zoff;
         const SpriteFrame *ft = sprite_frames_table[expl_vect].frames;
         int ft_count = sprite_frames_table[expl_vect].count;
-        /* World size for explosion sprite (128 = 2x so explosions read clearly). */
-        int expl_w = 128, expl_h = 128;
+        /* World size for explosion sprite (256 = large so explosions read clearly). */
+        int expl_w = 256, expl_h = 256;
         /* PTR has 64 columns per frame (frames_explosion ptr_off steps by 64*4); use src_cols/rows=32 so eff_cols/eff_rows=64. */
         int src_cols = 32, src_rows = 32;
 
         for (int ei = 0; ei < state->num_explosions; ei++) {
             if (state->explosions[ei].zone != (int16_t)zone_id) continue;
+            if (state->explosions[ei].start_delay > 0) continue; /* not started yet */
             if ((int)state->explosions[ei].frame >= 9) continue;
             int frame_num = state->explosions[ei].frame;
             if (frame_num >= ft_count) frame_num = ft_count - 1;

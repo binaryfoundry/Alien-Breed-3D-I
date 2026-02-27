@@ -255,7 +255,8 @@ typedef struct {
         int16_t  x, z;
         int16_t  zone;
         int32_t  y_floor;   /* world Y for sprite placement (same scale as obj_floor) */
-        int8_t   frame;
+        int8_t   frame;     /* animation frame 0..8 */
+        int8_t   start_delay; /* ticks before animation starts (variation) */
     } explosions[MAX_EXPLOSIONS];
     int num_explosions;
 

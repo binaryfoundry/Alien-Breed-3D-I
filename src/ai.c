@@ -72,17 +72,20 @@ void explode_into_bits(GameObject *obj, GameState *state)
         /* Find free slot in NastyShotData */
         uint8_t *shots = state->level.nasty_shot_data;
         GameObject *bit = NULL;
+        int slot_j = -1;
         for (int j = 0; j < 20; j++) {
             GameObject *candidate = (GameObject*)(shots + j * OBJECT_SIZE);
             if (OBJ_ZONE(candidate) < 0) {
                 bit = candidate;
+                slot_j = j;
                 break;
             }
         }
-        if (!bit) break;
+        if (!bit || slot_j < 0) break;
 
         /* Set up debris fragment as a bullet with random velocity */
         memset(bit, 0, OBJECT_SIZE);
+        OBJ_SET_CID(bit, (int16_t)slot_j);  /* so position is read/written in object_points[slot_j] */
         bit->obj.number = OBJ_NBR_BULLET;
         OBJ_SET_ZONE(bit, OBJ_ZONE(obj));
         bit->obj.in_top = obj->obj.in_top;
@@ -103,11 +106,12 @@ void explode_into_bits(GameObject *obj, GameState *state)
         SHOT_POWER(*bit) = 0; /* debris does no damage */
         SHOT_SET_LIFE(*bit, 0);
 
-        /* Copy position from source object */
+        /* Copy position from source object (Amiga: position is in ObjectPoints at CID, not object index) */
         if (state->level.object_points) {
-            int src_idx = (int)(((uint8_t*)obj - state->level.object_data) / OBJECT_SIZE);
+            int src_idx = (int)OBJ_CID(obj);   /* point index where enemy position lives */
             int dst_idx = (int)OBJ_CID(bit);
-            if (src_idx >= 0 && dst_idx >= 0) {
+            if (src_idx >= 0 && dst_idx >= 0 &&
+                src_idx < state->level.num_object_points && dst_idx < state->level.num_object_points) {
                 uint8_t *sp = state->level.object_points + src_idx * 8;
                 uint8_t *dp = state->level.object_points + dst_idx * 8;
                 memcpy(dp, sp, 2); memcpy(dp + 4, sp + 4, 2); /* copy X, Z */

@@ -174,7 +174,9 @@ static void build_test_level_data(LevelState *level)
     int ptr_list_size = (NUM_POINTS + 1) * 2; /* indices + sentinel */
     /* Object data: just 2 player objects */
     int obj_data_size = 3 * OBJECT_SIZE; /* 2 players + 1 terminator */
-    int obj_points_size = 3 * 8;
+    /* Object points: 2 for players + 20 for nasty_shot_data (bullets/gibs) - Amiga shares this pool */
+    int num_obj_pts = 32;
+    int obj_points_size = num_obj_pts * 8;
 
     int total = hdr_size + zone_table_size + zone_data_size + points_size +
                 flines_size + combined_lists_size + ptr_list_size +
@@ -214,7 +216,7 @@ static void build_test_level_data(LevelState *level)
     wr16(hdr + 18, NUM_POINTS); /* num points */
     wr16(hdr + 20, NUM_ZONES);  /* num zones */
     wr16(hdr + 22, NUM_FLINES); /* num floor lines */
-    wr16(hdr + 24, 2);          /* num object points */
+    wr16(hdr + 24, (int16_t)num_obj_pts);  /* num object points (players + nasty shot slots) */
     wr32(hdr + 26, off_points); /* offset to points */
     wr32(hdr + 30, off_flines); /* offset to floor lines */
     wr32(hdr + 34, off_obj_data);    /* offset to object data */
@@ -354,21 +356,23 @@ static void build_test_level_data(LevelState *level)
 
     /* ---- Object data (2 player objects + terminator) ---- */
     memset(buf + off_obj_data, 0, (size_t)obj_data_size);
+    /* PLR1/PLR2 use point indices 30 and 31 so 0..19 stay free for nasty_shot_data (bullets/gibs) */
     /* PLR1 object */
-    wr16(buf + off_obj_data + 0, 0);     /* collision_id = 0 (PLR1) */
+    wr16(buf + off_obj_data + 0, 30);    /* collision_id = point index 30 */
     wr16(buf + off_obj_data + 12, 0);    /* zone = 0 */
     /* PLR2 object */
-    wr16(buf + off_obj_data + OBJECT_SIZE + 0, 1);  /* collision_id = 1 (PLR2) */
-    wr16(buf + off_obj_data + OBJECT_SIZE + 12, 3);  /* zone = 3 */
+    wr16(buf + off_obj_data + OBJECT_SIZE + 0, 31);  /* collision_id = point index 31 */
+    wr16(buf + off_obj_data + OBJECT_SIZE + 12, 3);   /* zone = 3 */
     /* Terminator object: collision_id = -1 ends the list */
     wr16(buf + off_obj_data + 2 * OBJECT_SIZE + 0, -1);
     wr16(buf + off_obj_data + 2 * OBJECT_SIZE + 12, -1); /* zone = -1 (inactive) */
 
-    /* ---- Object points ---- */
-    wr16(buf + off_obj_points + 0, 256);  /* PLR1 x */
-    wr16(buf + off_obj_points + 4, 256);  /* PLR1 z */
-    wr16(buf + off_obj_points + 8, 768);  /* PLR2 x */
-    wr16(buf + off_obj_points + 12, 768); /* PLR2 z */
+    /* ---- Object points: 0..19 for bullets/gibs, 30..31 for players ---- */
+    wr16(buf + off_obj_points + 30 * 8 + 0, 256);   /* PLR1 x */
+    wr16(buf + off_obj_points + 30 * 8 + 4, 256);   /* PLR1 z */
+    wr16(buf + off_obj_points + 31 * 8 + 0, 768);  /* PLR2 x */
+    wr16(buf + off_obj_points + 31 * 8 + 4, 768);   /* PLR2 z */
+    /* 0..19 zeroed by calloc - used by bullets/gibs when spawned */
 
     /* Store in level state - set pointers directly (bypass level_parse
      * since our test data isn't in the exact original header format) */
@@ -381,7 +385,7 @@ static void build_test_level_data(LevelState *level)
     level->object_points = buf + off_obj_points;
     level->plr1_obj = buf + off_obj_data;
     level->plr2_obj = buf + off_obj_data + OBJECT_SIZE;
-    level->num_object_points = 2;
+    level->num_object_points = num_obj_pts;
     level->num_zones = NUM_ZONES;
     level->num_floor_lines = NUM_FLINES;
     level->point_brights = NULL; /* No per-point brightness for test level */

@@ -128,16 +128,25 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
             audio_play_sample(params->death_sound, 64);
         }
 
-        /* Check for explosion death */
-        if (damage > 1 && params->explode_threshold > 0 &&
-            damage >= params->explode_threshold) {
-            int idx = (int)(((uint8_t*)obj - state->level.object_data) / OBJECT_SIZE);
+        /* Check for explosion death (Amiga: explode_threshold 0 = always explode on death) */
+        if ((params->explode_threshold == 0) || (params->explode_threshold > 0 && damage >= params->explode_threshold)) {
+            int idx = (int)OBJ_CID(obj);
             int16_t ex, ez;
             get_object_pos(&state->level, idx, &ex, &ez);
             int32_t y_floor = ((int32_t)obj_w(obj->raw + 4) + (int32_t)(int8_t)obj->raw[7]) << 7;
             if ((int8_t)obj->raw[7] == 0) y_floor = ((int32_t)obj_w(obj->raw + 4) + 32) << 7;
-            explosion_spawn(state, ex, ez, OBJ_ZONE(obj), y_floor);
-            explode_into_bits(obj, NULL);
+            y_floor += (88 << 7);   /* lower explosions so they sit on the ground */
+            /* Multiple explosion particles: same spread/count as barrel. */
+            {
+                const int num_particles = 6;
+                const int spread = 112;
+                for (int p = 0; p < num_particles && state->num_explosions < MAX_EXPLOSIONS; p++) {
+                    int16_t px = (int16_t)(ex + (int16_t)((rand() & (2*spread - 1)) - spread));
+                    int16_t pz = (int16_t)(ez + (int16_t)((rand() & (2*spread - 1)) - spread));
+                    explosion_spawn(state, px, pz, OBJ_ZONE(obj), y_floor);
+                }
+            }
+            explode_into_bits(obj, state);
         }
 
         /* Play death animation or remove */
@@ -633,6 +642,17 @@ void objects_update(GameState *state)
         obj_index++;
     }
 
+    /* Process nasty_shot_data bullets and gibs (not in object_data list) */
+    if (state->level.nasty_shot_data) {
+        uint8_t *shots = state->level.nasty_shot_data;
+        for (int j = 0; j < 20; j++) {
+            GameObject *bullet = (GameObject *)(shots + j * OBJECT_SIZE);
+            if (OBJ_ZONE(bullet) < 0) continue;
+            if (bullet->obj.number != OBJ_NBR_BULLET) continue;
+            object_handle_bullet(bullet, state);
+        }
+    }
+
     /* 5. Brightness animations */
     bright_anim_handler(state);
 }
@@ -947,8 +967,18 @@ void object_handle_barrel(GameObject *obj, GameState *state)
         int16_t zone = OBJ_ZONE(obj);
         int32_t y_floor = ((int32_t)obj_w(obj->raw + 4) + (int32_t)(int8_t)obj->raw[7]) << 7;
         if ((int8_t)obj->raw[7] == 0) y_floor = ((int32_t)obj_w(obj->raw + 4) + 32) << 7;
+        y_floor += (88 << 7);   /* lower explosions so they sit on the ground */
 
-        explosion_spawn(state, bx, bz, zone, y_floor);
+        /* Spawn explosion particles: wide spread and more count for a bigger blast. */
+        {
+            const int num_particles = 6;
+            const int spread = 112;   /* wide spread */
+            for (int p = 0; p < num_particles && state->num_explosions < MAX_EXPLOSIONS; p++) {
+                int16_t px = (int16_t)(bx + (int16_t)((rand() & (2*spread - 1)) - spread));
+                int16_t pz = (int16_t)(bz + (int16_t)((rand() & (2*spread - 1)) - spread));
+                explosion_spawn(state, px, pz, zone, y_floor);
+            }
+        }
 
         OBJ_SET_ZONE(obj, -1);
 
@@ -1131,8 +1161,12 @@ void object_handle_bullet(GameObject *obj, GameState *state)
         SHOT_SET_YVEL(*obj, yvel);
     }
 
-    /* Calculate new position */
-    int idx = (int)(((uint8_t*)obj - state->level.object_data) / OBJECT_SIZE);
+    /* Position is in object_points at OBJ_CID (works for both object_data and nasty_shot_data bullets). */
+    int idx = (int)OBJ_CID(obj);
+    if (idx < 0 || (state->level.object_points && idx >= state->level.num_object_points)) {
+        OBJ_SET_ZONE(obj, -1);
+        return;
+    }
     int16_t bx, bz;
     get_object_pos(&state->level, idx, &bx, &bz);
 
@@ -1269,6 +1303,13 @@ void object_handle_bullet(GameObject *obj, GameState *state)
         uint8_t *pts = state->level.object_points + idx * 8;
         obj_sw(pts, (int16_t)ctx.newx);
         obj_sw(pts + 4, (int16_t)ctx.newz);
+    }
+
+    /* Update render Y (obj[4]) from accypos so bullets/gibs draw at correct height */
+    {
+        int world_h = (int)(int8_t)obj->raw[7];
+        if (world_h <= 0) world_h = 32;
+        obj_sw(obj->raw + 4, (int16_t)((accypos >> 7) - world_h));
     }
 
     /* Update zone from room (zone word at offset 0; fallback derive from roompt if invalid) */
@@ -2123,13 +2164,25 @@ void explosion_spawn(GameState *state, int16_t x, int16_t z, int16_t zone, int32
     state->explosions[i].zone = zone;
     state->explosions[i].y_floor = y_floor;
     state->explosions[i].frame = 0;
+    /* 0..3 tick delay so particles don't all animate in lockstep */
+    state->explosions[i].start_delay = (int8_t)(rand() & 3);
 }
 
+/* Amiga: explosion advances one step per ObjMoveAnim (per vblank). We advance by temp_frames
+ * so when we simulate multiple vblanks in one tick, explosion timing matches.
+ * start_delay gives per-particle variation so they don't all animate in lockstep. */
 void explosion_advance(GameState *state)
 {
     int n = state->num_explosions;
+    int tf = state->temp_frames;
+    if (tf <= 0) tf = 1;
     for (int i = 0; i < n; i++) {
-        state->explosions[i].frame = (int8_t)(state->explosions[i].frame + 1);
+        if (state->explosions[i].start_delay > 0) {
+            state->explosions[i].start_delay = (int8_t)(state->explosions[i].start_delay - tf);
+            if (state->explosions[i].start_delay < 0) state->explosions[i].start_delay = 0;
+        } else {
+            state->explosions[i].frame = (int8_t)(state->explosions[i].frame + tf);
+        }
         if ((int)state->explosions[i].frame >= 9) {
             /* Remove: shift down */
             n--;
