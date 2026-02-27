@@ -1539,6 +1539,7 @@ void door_routine(GameState *state)
 
             const int32_t open_speed = -16;
             const int32_t close_speed = 4;
+            int16_t prev_vel = door_vel;
             if (satisfied) {
                 if (door_pos > door_top)
                     door_vel = (int16_t)open_speed;
@@ -1554,6 +1555,8 @@ void door_routine(GameState *state)
                     door_pos = door_bot;
                 }
             }
+            if (door_vel != 0 && prev_vel == 0)
+                audio_play_sample(5, 64);  /* newdoor: play when door starts opening or closing */
         }
 
         door_pos += (int32_t)door_vel * state->temp_frames * 64;
@@ -1634,6 +1637,7 @@ void lift_routine(GameState *state)
         int16_t lift_type = be16(lift + 2);
         int32_t lift_pos = be32(lift + 4);
         int16_t lift_vel = be16(lift + 8);
+        int16_t prev_lift_vel = lift_vel;
         int32_t lift_top = be32(lift + 10);
         int32_t lift_bot = be32(lift + 14);
         uint16_t lift_flags = (uint16_t)be16(lift + 18);
@@ -1687,6 +1691,9 @@ void lift_routine(GameState *state)
             }
             /* Else neither at top nor at bottom: keep current velocity (already moving). */
         }
+
+        if (lift_vel != 0 && prev_lift_vel == 0)
+            audio_play_sample(5, 64);  /* newdoor: play when lift starts moving (same as door) */
 
         lift_pos += (int32_t)lift_vel * state->temp_frames * 64;
         if (lift_pos < lift_top) lift_pos = lift_top;
