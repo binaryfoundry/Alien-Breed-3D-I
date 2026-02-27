@@ -109,9 +109,9 @@ static int load_one_sample(int id)
     char subpath[80];
     char path[512];
     if (id < NUM_NAMED_SFX) {
-        snprintf(subpath, sizeof(subpath), "sounds/%s", sfx_names[id]);
+        snprintf(subpath, sizeof(subpath), "sounds/%s.wav", sfx_names[id]);
     } else {
-        snprintf(subpath, sizeof(subpath), "sounds/%d", id);
+        snprintf(subpath, sizeof(subpath), "sounds/%d.wav", id);
     }
     io_make_data_path(path, sizeof(path), subpath);
 
