@@ -96,10 +96,9 @@ void game_loop(GameState *state)
             pending_vblanks += (int)(vblank_remainder_ms / 20);
             vblank_remainder_ms %= 20;
 
-            /* Log player zone and zone exit flines every 3 seconds */
+            /* Log zone exit flines every 3 seconds (player zone logging disabled) */
             if (now - last_zone_log_ticks >= 3000) {
                 int z = state->plr1.zone;
-                printf("[Game] Player zone: %d\n", z);
                 if (state->level.zone_adds && state->level.data && state->level.floor_lines &&
                     z >= 0 && z < state->level.num_zones &&
                     state->level.num_floor_lines > 0) {

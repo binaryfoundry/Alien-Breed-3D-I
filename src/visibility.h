@@ -46,11 +46,14 @@ void order_zones(ZoneOrder *out, const LevelState *level,
  * Returns bitmask: bit 0 = target can see viewer, bit 1 = viewer can see target.
  * Uses the zone graph to trace through rooms.
  */
+/* full_height: if non-zero, accept crossing heights in either floor section
+ * (used for hitscan so a lower-floor shooter can hit upper-floor targets). */
 uint8_t can_it_be_seen(const LevelState *level,
                        const uint8_t *from_room, const uint8_t *to_room,
                        int16_t to_zone_id,
                        int16_t viewer_x, int16_t viewer_z, int16_t viewer_y,
                        int16_t target_x, int16_t target_z, int16_t target_y,
-                       int8_t viewer_top, int8_t target_top);
+                       int8_t viewer_top, int8_t target_top,
+                       int full_height);
 
 #endif /* VISIBILITY_H */

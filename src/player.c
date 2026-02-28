@@ -1281,15 +1281,15 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
 
     if (state->level.object_data) {
         for (int i = 0; i < state->level.num_object_points && i < MAX_OBJECTS; i++) {
+            GameObject *obj = (GameObject*)(state->level.object_data + i * OBJECT_SIZE);
+            int obj_type = obj->obj.number;
             if (!obs_in_line[i]) continue;
             int16_t dist = obj_dists[i];
             if (dist <= 0) continue;
 
             /* Check if this object type is a valid target */
-            GameObject *obj = (GameObject*)(state->level.object_data + i * OBJECT_SIZE);
             if (OBJ_ZONE(obj) < 0) continue;
 
-            int obj_type = obj->obj.number;
             if (obj_type < 0 || obj_type > 20) continue;
             if (!(enemy_flags & (1u << obj_type))) continue;
 
@@ -1303,7 +1303,6 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
             }
         }
     }
-
     /* Calculate vertical aim toward target (PlayerShoot.s lines 99-139) */
     if (closest_idx >= 0 && closest_dist > 0) {
         /* bulyspd = (target_y - player_y + 18*256) / (dist >> bullet_speed)

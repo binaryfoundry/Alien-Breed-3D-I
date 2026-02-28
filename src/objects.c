@@ -518,7 +518,7 @@ static void enemy_update_can_see(GameObject *obj, GameState *state)
                                              enemy_x, enemy_z, viewer_y,
                                              plr_x, plr_z, target_y,
                                              obj->obj.in_top,
-                                             state->plr1.stood_in_top);
+                                             state->plr1.stood_in_top, 0);
                 if (vis) obj->obj.can_see |= 0x01;
             }
         }
@@ -542,7 +542,7 @@ static void enemy_update_can_see(GameObject *obj, GameState *state)
                                              enemy_x, enemy_z, viewer_y,
                                              plr_x, plr_z, target_y,
                                              obj->obj.in_top,
-                                             state->plr2.stood_in_top);
+                                             state->plr2.stood_in_top, 0);
                 if (vis) obj->obj.can_see |= 0x02;
             }
         }
@@ -2687,10 +2687,13 @@ void calc_plr1_in_line(GameState *state)
 
         /* In line if: forward > 0 && perpendicular/2 < box_width */
         if (fwd > 0 && (perp >> 1) <= box_width) {
-            /* LOS check: only mark in-line when no wall/door is between player and object */
+            /* LOS check: only mark in-line when no wall/door is between player and object.
+             * Pass floor-level as 0 for both ends so can_it_be_seen never rejects a target
+             * just because they are on a different floor level (upper/lower). Walls and doors
+             * still block shots correctly via the zone-exit geometry. */
             int los_ok = 1;
+            int16_t obj_zone = OBJ_ZONE(obj);
             if (plr_room) {
-                int16_t obj_zone = OBJ_ZONE(obj);
                 const uint8_t *obj_room = NULL;
                 if (state->level.data && state->level.zone_adds && obj_zone >= 0 &&
                     obj_zone < state->level.num_zones) {
@@ -2702,7 +2705,7 @@ void calc_plr1_in_line(GameState *state)
                                              plr_room, obj_room, obj_zone,
                                              plr_x, plr_z, plr_y,
                                              ox, oz, obj_y,
-                                             state->plr1.stood_in_top, obj->obj.in_top);
+                                             0, 0, 1); /* full_height for hitscan */
                 los_ok = (vis != 0);
             }
             if (los_ok)
@@ -2778,7 +2781,7 @@ void calc_plr2_in_line(GameState *state)
                                              plr_room, obj_room, obj_zone,
                                              plr_x, plr_z, plr_y,
                                              ox, oz, obj_y,
-                                             state->plr2.stood_in_top, obj->obj.in_top);
+                                             0, 0, 1); /* full_height for hitscan */
                 los_ok = (vis != 0);
             }
             if (los_ok)

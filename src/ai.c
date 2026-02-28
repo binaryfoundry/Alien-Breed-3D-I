@@ -291,7 +291,7 @@ void ai_control(GameObject *obj, GameState *state, const AIParams *params)
         uint8_t vis = can_it_be_seen(level, from_room, to_room, other_zone,
                                      self_x, self_z, viewer_y,
                                      other_x, other_z, target_y,
-                                     obj->obj.in_top, other->obj.in_top);
+                                     obj->obj.in_top, other->obj.in_top, 0);
 
         if (!vis) {
             obj_idx++;
