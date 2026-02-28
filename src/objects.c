@@ -1382,10 +1382,11 @@ void object_handle_bullet(GameObject *obj, GameState *state)
         obj->obj.world_height = f->height;
         obj_sw(obj->raw + 8,  f->vect_num);
         obj_sw(obj->raw + 10, f->frame_num);
-        /* Update src_cols/rows (obj[14:15]). Gibs (50-53) use 16x16 per frame so one frame shows per billboard; else BulletSizes. */
+        /* Update src_cols/rows (obj[14:15]).
+         * Gibs (50-53): each frame is 16×16 in the alien sheet. eff = src*2, so src=8 → eff=16. */
         if (shot_size >= 50) {
-            obj->raw[14] = 16;
-            obj->raw[15] = 16;
+            obj->raw[14] = 8;
+            obj->raw[15] = 8;
         } else {
             obj->raw[14] = bullet_fly_src_cols[(uint8_t)shot_size < MAX_BULLET_ANIM_IDX ? (uint8_t)shot_size : 0];
             obj->raw[15] = bullet_fly_src_rows[(uint8_t)shot_size < MAX_BULLET_ANIM_IDX ? (uint8_t)shot_size : 0];
