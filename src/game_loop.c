@@ -68,7 +68,6 @@ void game_loop(GameState *state)
     Uint32 last_ticks = SDL_GetTicks();
     int pending_vblanks = 0;
     Uint32 vblank_remainder_ms = 0;
-    static Uint32 last_zone_log_ticks = 0;
 
     while (state->running) {
 
@@ -95,38 +94,6 @@ void game_loop(GameState *state)
             vblank_remainder_ms += elapsed;
             pending_vblanks += (int)(vblank_remainder_ms / 20);
             vblank_remainder_ms %= 20;
-
-            /* Log zone exit flines every 3 seconds (player zone logging disabled) */
-            if (now - last_zone_log_ticks >= 3000) {
-                int z = state->plr1.zone;
-                if (state->level.zone_adds && state->level.data && state->level.floor_lines &&
-                    z >= 0 && z < state->level.num_zones &&
-                    state->level.num_floor_lines > 0) {
-                    const uint8_t *za = state->level.zone_adds;
-                    int32_t zoff = (int32_t)((za[z*4u]<<24)|(za[z*4u+1]<<16)|(za[z*4u+2]<<8)|za[z*4u+3]);
-                    const uint8_t *zd = state->level.data + (size_t)zoff;
-                    int16_t exit_off = (int16_t)((zd[32]<<8)|zd[33]);
-                    const uint8_t *list = zd + (int16_t)exit_off;
-                    for (int i = 0; i < 128; i++) {
-                        int16_t entry = (int16_t)((list[i*2]<<8)|list[i*2+1]);
-                        if (entry < 0) break;
-                        if (entry >= state->level.num_floor_lines) continue;
-                        const uint8_t *fl = state->level.floor_lines + (size_t)entry * 16u;
-                        int16_t fx   = (int16_t)((fl[0]<<8)|fl[1]);
-                        int16_t fz   = (int16_t)((fl[2]<<8)|fl[3]);
-                        int16_t fxlen= (int16_t)((fl[4]<<8)|fl[5]);
-                        int16_t fzlen= (int16_t)((fl[6]<<8)|fl[7]);
-                        int16_t conn = (int16_t)((fl[8]<<8)|fl[9]);
-                        int16_t len  = (int16_t)((fl[10]<<8)|fl[11]);
-                        int16_t norm = (int16_t)((fl[12]<<8)|fl[13]);
-                        int8_t  away = (int8_t)fl[14];
-                        int conn_idx = level_connect_to_zone_index(&state->level, conn);
-                        printf("[Game]   exit fline %d: x=%d z=%d xlen=%d zlen=%d connect=%d ->zone_idx=%d length=%d normal=%d away=%d\n",
-                               entry, (int)fx, (int)fz, (int)fxlen, (int)fzlen, (int)conn, conn_idx, (int)len, (int)norm, (int)away);
-                    }
-                }
-                last_zone_log_ticks = now;
-            }
         }
 
         /* ================================================================
