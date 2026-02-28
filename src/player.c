@@ -1319,37 +1319,44 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
     }
 
     /* 6. Fire the weapon */
-    printf("[SHOOT] plr%d fired gun%d: closest_idx=%d dist=%d\n",
-           plr_num, gun_idx, closest_idx, (int)closest_dist);
     if (gun->fire_bullet != 0) {
         /* Instant-hit weapon (pistol, shotgun) */
         int num_pellets = gun->bullet_count;
         if (num_pellets < 1) num_pellets = 1;
 
+        /* Amiga PlayerShoot.s FIREBULLETS:
+         *   rand_val = GetRand() & 0x7fff
+         *   scaled_dist_sq = ((ox-plr_x)^2 + (oz-plr_z)^2) >> 6
+         *   hit if rand_val*2 > scaled_dist_sq
+         * Same rule applies to every pellet (pistol 1x, shotgun 7x). */
+        int16_t tgt_ox = 0, tgt_oz = 0;
+        if (closest_idx >= 0 && state->level.object_points) {
+            GameObject *tgt = (GameObject*)(state->level.object_data + closest_idx * OBJECT_SIZE);
+            int16_t cid = OBJ_CID(tgt);
+            if (cid >= 0) {
+                const uint8_t *pt = state->level.object_points + (int)cid * 8;
+                tgt_ox = (int16_t)((pt[0] << 8) | pt[1]);
+                tgt_oz = (int16_t)((pt[4] << 8) | pt[5]);
+            }
+        }
+        int32_t plr_ox = plr->p_xoff; /* already integer world units */
+        int32_t plr_oz = plr->p_zoff;
+        int32_t adx = tgt_ox - (int16_t)plr_ox;
+        int32_t adz = tgt_oz - (int16_t)plr_oz;
+        int32_t scaled_dist_sq = ((adx * adx) + (adz * adz)) >> 6;
+
         for (int p = 0; p < num_pellets; p++) {
-            /* Accuracy: random spread for shotgun multi-pellet scatter.
-             * For pistol (1 pellet) spread is unused since auto-aim always hits. */
-            int16_t spread = (int16_t)((rand() & 0x7FF) - 0x400);
+            /* Amiga hit test: random [0,32767]*2 vs scaled dist² */
+            int32_t rand_val = (int32_t)(rand() & 0x7fff);
 
             if (closest_idx >= 0) {
-                /* For multi-pellet weapons (shotgun) apply spread based on target box width.
-                 * Single-pellet hitscan (pistol) always hits the auto-aimed target. */
-                if (num_pellets > 1) {
-                    GameObject *tobj = (GameObject*)(state->level.object_data +
-                                       closest_idx * OBJECT_SIZE);
-                    int ttype = tobj->obj.number;
-                    int32_t miss_threshold = (ttype >= 0 && ttype <= 20)
-                                             ? col_box_table[ttype].width : 40;
-                    int32_t effective_spread = ((int32_t)spread * closest_dist) >> 12;
-                    if (effective_spread > miss_threshold || effective_spread < -miss_threshold)
-                        continue; /* pellet missed */
-                }
+                /* Miss if random doesn't beat distance (same for pistol and shotgun) */
+                if (rand_val * 2 <= scaled_dist_sq)
+                    continue; /* pellet missed */
 
                 /* Hit the target */
                 GameObject *target = (GameObject*)(state->level.object_data +
                                      closest_idx * OBJECT_SIZE);
-                printf("[SHOOT] HIT slot=%d type=%d cid=%d power=%d\n",
-                       closest_idx, (int)target->obj.number, (int)OBJ_CID(target), (int)gun->shot_power);
                 NASTY_SET_DAMAGE(target, (int8_t)(NASTY_DAMAGE(*target) + gun->shot_power));
 
                 /* Impact force on target (push in firing direction) */
