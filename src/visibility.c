@@ -56,6 +56,61 @@ static inline int reg_btst32(uint32_t value, unsigned int bit_index)
 #define ZONE_EXIT_LIST      32
 #define ZONE_LIST_OF_GRAPH  48
 
+/* Door table entry (22 bytes). door_pos at closed position = door blocked. */
+#define DOOR_ENTRY_SIZE     22
+#define DOOR_ZONE_ID        0
+#define DOOR_TYPE           2
+#define DOOR_POS            4
+#define DOOR_BOT            14
+/* door_type: 4 = always open, 5 = never open */
+#define DOOR_TYPE_ALWAYS_OPEN  4
+#define DOOR_TYPE_NEVER_OPEN  5
+
+/* Return zone index whose zone data pointer equals room, or -1. */
+static int16_t zone_index_from_room(const LevelState *level, const uint8_t *room)
+{
+    if (!level->zone_adds || !level->data || room < level->data) return -1;
+    int32_t room_off = (int32_t)(room - level->data);
+    for (int16_t z = 0; z < level->num_zones; z++) {
+        int32_t zoff = (int32_t)read_be32(level->zone_adds + (unsigned)z * 4u);
+        if (zoff == room_off) return z;
+    }
+    return -1;
+}
+
+/* Return true if exit line_idx from zone current_zone_id is blocked by a closed door. */
+static bool is_exit_blocked_by_door(const LevelState *level, int16_t current_zone_id,
+                                    int16_t line_idx)
+{
+    if (!level->door_data || !level->door_wall_list || !level->door_wall_list_offsets) return false;
+    if (current_zone_id < 0) return false;
+
+    const uint8_t *door = level->door_data;
+    for (int door_idx = 0; door_idx < level->num_doors; door_idx++, door += DOOR_ENTRY_SIZE) {
+        int16_t zone_id = (int16_t)read_be16(door + DOOR_ZONE_ID);
+        if (zone_id != current_zone_id) continue;
+
+        int16_t dtype = (int16_t)read_be16(door + DOOR_TYPE);
+        if (dtype == DOOR_TYPE_ALWAYS_OPEN) continue;
+        if (dtype == DOOR_TYPE_NEVER_OPEN) return true;  /* door never opens → always block */
+
+        uint32_t start = level->door_wall_list_offsets[door_idx];
+        uint32_t end   = level->door_wall_list_offsets[door_idx + 1];
+        for (uint32_t j = start; j < end; j++) {
+            const uint8_t *ent = level->door_wall_list + j * 6u;
+            int16_t fline = (int16_t)read_be16(ent);
+            if (fline != line_idx) continue;
+
+            /* This exit is this door. Block if door is closed (pos at bot). */
+            int32_t door_pos = (int32_t)read_be32(door + DOOR_POS);
+            int32_t door_bot = (int32_t)read_be32(door + DOOR_BOT);
+            if (door_pos >= door_bot) return true;
+            break;
+        }
+    }
+    return false;
+}
+
 /* Return 1 if node_a appears before node_b when walking from head. */
 static int node_before(int head, int node_a, int node_b,
                       const int *next)
@@ -345,10 +400,12 @@ uint8_t can_it_be_seen(const LevelState *level,
 
     /* GoThroughZones (Amiga ObjectMove.s lines 1564-1664).
      * For each exit of current_room, test if viewer→target ray crosses the exit line,
-     * then advance into the next zone. Repeat until we reach to_room or fail. */
+     * then advance into the next zone. Repeat until we reach to_room or fail.
+     * Exits that are closed doors block line-of-sight (enemies must not see through doors). */
     int32_t dy = (int32_t)target_y - (int32_t)viewer_y;
     const uint8_t *current_room = from_room;
     int8_t d2 = viewer_top;
+    int16_t current_zone_id = zone_index_from_room(level, from_room);
 
     for (int depth = 0; depth < 20; depth++) {
         int16_t exit_rel = read_be16(current_room + ZONE_EXIT_LIST);
@@ -387,6 +444,9 @@ uint8_t can_it_be_seen(const LevelState *level,
             if (connect < 0) return 0;
             int connect_index = level_connect_to_zone_index(level, connect);
             if (connect_index < 0) continue;
+
+            /* Closed door blocks this exit: do not treat as visible through it */
+            if (is_exit_blocked_by_door(level, current_zone_id, line_idx)) continue;
 
             /* Height at which ray crosses this exit line.
              * Amiga d4 = (tz-lz)*lxlen - (tx-lx)*lzlen  (target signed distance, negated)
@@ -442,6 +502,7 @@ uint8_t can_it_be_seen(const LevelState *level,
             }
             current_room = next_zone;
             d2 = entry_top;
+            current_zone_id = (int16_t)connect_index;
             found_exit = true;
             break;
         }
