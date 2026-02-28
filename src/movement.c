@@ -400,10 +400,24 @@ static int check_wall_line(MoveContext* ctx, LevelState* level,
         int32_t our_floor = read_be32(zone_data +
             (ctx->stood_in_top ? ZONE_UPPER_FLOOR : ZONE_FLOOR_HEIGHT));
 
-        int32_t floor_diff = target_floor - our_floor;
-        if (floor_diff < 0) floor_diff = -floor_diff;
+        /* Amiga-style signed step check:
+         *   Step UP   (target floor < our floor → more negative Y = higher in world):
+         *             block when our_floor - target_floor > step_up_val.
+         *   Step DOWN (target floor > our floor → lower in world):
+         *             always passable (player simply falls); only block if
+         *             floor_diff > step_down_val (which is huge, so effectively never).
+         */
+        int32_t floor_diff_signed = target_floor - our_floor;
+        bool height_ok;
+        if (floor_diff_signed <= 0) {
+            /* Step up: target is higher (smaller Y). Block if too tall. */
+            height_ok = ((-floor_diff_signed) <= ctx->step_up_val);
+        } else {
+            /* Step down: target is lower. Amiga always allows this. */
+            height_ok = (floor_diff_signed <= ctx->step_down_val);
+        }
 
-        if (floor_diff <= ctx->step_up_val) {
+        if (height_ok) {
             int32_t clearance = target_floor - target_roof;
             uint8_t* target_room = (uint8_t*)(level->data + target_zone_off);
             if (clearance >= ctx->thing_height || ctx->thing_height == 0) {
@@ -414,7 +428,7 @@ static int check_wall_line(MoveContext* ctx, LevelState* level,
                 /* If blocked by no_transition_back, treat as wall below. */
             }
         }
-        /* Exit blocked by step/clearance: treat as wall below. */
+        /* Exit blocked by step height or clearance: treat as wall. */
     }
 
     /* ---- Wall collision with extents ----
@@ -542,9 +556,15 @@ static void find_room(MoveContext* ctx, LevelState* level,
                         int32_t our_floor = read_be32(zone_data +
                             (ctx->stood_in_top ? ZONE_UPPER_FLOOR : ZONE_FLOOR_HEIGHT));
 
-                        int32_t floor_diff = target_floor - our_floor;
-                        if (floor_diff < 0) floor_diff = -floor_diff;
-                        if (floor_diff > ctx->step_up_val) continue;
+                        /* Amiga-style signed step check (mirrors check_wall_line). */
+                        int32_t floor_diff_signed = target_floor - our_floor;
+                        if (floor_diff_signed <= 0) {
+                            /* Step up: block if too tall */
+                            if ((-floor_diff_signed) > ctx->step_up_val) continue;
+                        } else {
+                            /* Step down: always allowed unless impossibly deep */
+                            if (floor_diff_signed > ctx->step_down_val) continue;
+                        }
 
                         {
                             int32_t clearance = target_floor - target_roof;

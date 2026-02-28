@@ -31,11 +31,12 @@
 #define BOBBLE_MASK         8190
 #define CLUMP_MASK          4095
 #define CLUMP_THRESHOLD     (-4096)  /* and.w #-4096,d1 checks bit 12+ */
-/* Match ObjectMove.s: move.l #100000,StepUpVal/StepDownVal. Segment check in movement.c
- * ensures we only transition when path hits the exit segment (so we don't walk through stairs). */
-#define STEP_UP_NORMAL      100000
-#define STEP_UP_DUCKED      50000
-#define STEP_DOWN_DEFAULT   100000
+/* Amiga step-up: same scale as zone floor heights. game_data uses 40*256 for marines;
+ * movement.c default is 40*256. Step-UP blocked when ledge is higher than this.
+ * Step-DOWN always passable (unlimited). */
+#define STEP_UP_NORMAL      (40 * 256)   /* 10240 - match Amiga ObjectMove step-up */
+#define STEP_UP_DUCKED      (20 * 256)   /* 5120 - stricter when ducked */
+#define STEP_DOWN_DEFAULT   0x3fffffff  /* effectively unlimited */
 
 /* Gun selection key -> gun index mapping (from GUNVALS in Plr1Control.s) */
 static const int8_t gun_key_map[6] = { 0, 7, 1, 2, 3, 4 };
