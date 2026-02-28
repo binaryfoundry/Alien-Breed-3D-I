@@ -1253,11 +1253,26 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
     int8_t *obs_in_line = (plr_num == 1) ? plr1_obs_in_line : plr2_obs_in_line;
     int16_t *obj_dists = (plr_num == 1) ? plr1_obj_dists : plr2_obj_dists;
 
-    /* Enemy flags for target detection (include barrel so shooting barrels causes explosion) */
-    uint32_t enemy_flags = (plr_num == 1) ?
-        0x3FF371 :  /* %1111111111110111000001 for P1 */
-        0x3FD5E1;   /* %1111111111010111100001 for P2 */
-    enemy_flags |= (1u << OBJ_NBR_BARREL);
+    /* Hitscan target flags: enemies + barrel only.
+     * Pickups (ammo/medikit/key/gun) and player objects are NOT valid targets —
+     * the original Amiga magic numbers had ammo(9)/key(4) bits set by mistake,
+     * which caused ammo pickups to silently absorb shots and report nothing. */
+    uint32_t enemy_flags =
+        (1u << OBJ_NBR_ALIEN)           |  /* 0  */
+        (1u << OBJ_NBR_ROBOT)           |  /* 6  */
+        (1u << OBJ_NBR_BIG_NASTY)       |  /* 7  */
+        (1u << OBJ_NBR_FLYING_NASTY)    |  /* 8  */
+        (1u << OBJ_NBR_BARREL)          |  /* 10 */
+        (1u << OBJ_NBR_MARINE)          |  /* 12 */
+        (1u << OBJ_NBR_WORM)            |  /* 13 */
+        (1u << OBJ_NBR_HUGE_RED_THING)  |  /* 14 */
+        (1u << OBJ_NBR_SMALL_RED_THING) |  /* 15 */
+        (1u << OBJ_NBR_TREE)            |  /* 16 */
+        (1u << OBJ_NBR_EYEBALL)         |  /* 17 */
+        (1u << OBJ_NBR_TOUGH_MARINE)    |  /* 18 */
+        (1u << OBJ_NBR_FLAME_MARINE)    |  /* 19 */
+        (1u << OBJ_NBR_GAS_PIPE);          /* 20 */
+    (void)plr_num; /* flags are now the same for both players */
 
     /* Find closest target in line of fire */
     int closest_idx = -1;
@@ -1304,26 +1319,37 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
     }
 
     /* 6. Fire the weapon */
+    printf("[SHOOT] plr%d fired gun%d: closest_idx=%d dist=%d\n",
+           plr_num, gun_idx, closest_idx, (int)closest_dist);
     if (gun->fire_bullet != 0) {
         /* Instant-hit weapon (pistol, shotgun) */
         int num_pellets = gun->bullet_count;
         if (num_pellets < 1) num_pellets = 1;
 
         for (int p = 0; p < num_pellets; p++) {
-            /* Accuracy: random spread increases with distance */
+            /* Accuracy: random spread for shotgun multi-pellet scatter.
+             * For pistol (1 pellet) spread is unused since auto-aim always hits. */
             int16_t spread = (int16_t)((rand() & 0x7FF) - 0x400);
 
             if (closest_idx >= 0) {
-                /* Apply spread to see if pellet actually hits */
-                int32_t effective_spread = ((int32_t)spread * closest_dist) >> 12;
-                /* If spread is too large, pellet misses */
-                if (effective_spread > 40 || effective_spread < -40) {
-                    continue; /* Miss */
+                /* For multi-pellet weapons (shotgun) apply spread based on target box width.
+                 * Single-pellet hitscan (pistol) always hits the auto-aimed target. */
+                if (num_pellets > 1) {
+                    GameObject *tobj = (GameObject*)(state->level.object_data +
+                                       closest_idx * OBJECT_SIZE);
+                    int ttype = tobj->obj.number;
+                    int32_t miss_threshold = (ttype >= 0 && ttype <= 20)
+                                             ? col_box_table[ttype].width : 40;
+                    int32_t effective_spread = ((int32_t)spread * closest_dist) >> 12;
+                    if (effective_spread > miss_threshold || effective_spread < -miss_threshold)
+                        continue; /* pellet missed */
                 }
 
                 /* Hit the target */
                 GameObject *target = (GameObject*)(state->level.object_data +
                                      closest_idx * OBJECT_SIZE);
+                printf("[SHOOT] HIT slot=%d type=%d cid=%d power=%d\n",
+                       closest_idx, (int)target->obj.number, (int)OBJ_CID(target), (int)gun->shot_power);
                 NASTY_SET_DAMAGE(target, (int8_t)(NASTY_DAMAGE(*target) + gun->shot_power));
 
                 /* Impact force on target (push in firing direction) */

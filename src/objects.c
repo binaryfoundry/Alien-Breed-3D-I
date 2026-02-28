@@ -2369,9 +2369,9 @@ void calc_plr1_in_line(GameState *state)
 
         if (OBJ_ZONE(obj) < 0) continue;
 
-        /* Get object position */
+        /* Get object position via its CID (point index), NOT slot index i */
         int16_t ox, oz;
-        get_object_pos(&state->level, i, &ox, &oz);
+        get_object_pos(&state->level, OBJ_CID(obj), &ox, &oz);
 
         int16_t dx = ox - plr_x;
         int16_t dz = oz - plr_z;
@@ -2424,8 +2424,9 @@ void calc_plr2_in_line(GameState *state)
 
         if (OBJ_ZONE(obj) < 0) continue;
 
+        /* Get object position via its CID (point index), NOT slot index i */
         int16_t ox, oz;
-        get_object_pos(&state->level, i, &ox, &oz);
+        get_object_pos(&state->level, OBJ_CID(obj), &ox, &oz);
 
         int16_t dx = ox - plr_x;
         int16_t dz = oz - plr_z;
