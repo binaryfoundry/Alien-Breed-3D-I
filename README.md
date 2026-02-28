@@ -2,6 +2,9 @@
 
 A **C port** of **Alien Breed 3D** (Amiga), translating the original 68000 assembly into C and rendering with SDL2 on Windows, Linux, and macOS. The game logic, level format, and data layout follow the Amiga version; assets must be extracted from the original game.
 
+![Alien Breed HD Image](docs/alien.jpg)
+
+
 ---
 
 ## Repository layout
