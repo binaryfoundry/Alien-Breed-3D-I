@@ -1517,6 +1517,10 @@ void object_handle_bullet(GameObject *obj, GameState *state)
             audio_play_sample(bullet_types[shot_size].hit_noise,
                               bullet_types[shot_size].hit_volume);
         }
+        /* Gibs: splatter sound when they hit floor/roof/wall */
+        if (shot_size >= 50) {
+            audio_play_sample(13, 64);  /* splotch */
+        }
 
         /* Explosive force + explosion animation */
         if (shot_size >= 0 && shot_size < 8 &&
