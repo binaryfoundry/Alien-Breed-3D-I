@@ -467,6 +467,15 @@ static int obj_type_to_enemy_index(int8_t obj_type)
  * Called by every enemy handler each tick (Amiga: each NormalAlien / MutantMarine
  * calls CanItBeSeen itself in its prowl/attack routine).
  * ----------------------------------------------------------------------- */
+/* Return non-zero if the zone at zone_id has an upper floor section. */
+static int zone_has_upper_floor(const GameState *state, int16_t zone_id)
+{
+    if (!state->level.zone_adds || !state->level.data || zone_id < 0) return 0;
+    int32_t zo = (int32_t)be32(state->level.zone_adds + (uint32_t)zone_id * 4u);
+    if (zo <= 0) return 0;
+    return be32(state->level.data + zo + 10) != 0;  /* ZD_UPPER_FLOOR != 0 */
+}
+
 static void enemy_update_can_see(GameObject *obj, GameState *state)
 {
     int16_t enemy_zone = OBJ_ZONE(obj);
@@ -484,49 +493,52 @@ static void enemy_update_can_see(GameObject *obj, GameState *state)
     /* Player 1 → bit 0 */
     {
         int16_t plr_zone = state->plr1.zone;
-        const uint8_t *to_room = level_get_zone_data_ptr(&state->level, plr_zone);
-        if (to_room) {
-            int16_t plr_x    = (int16_t)state->plr1.p_xoff;
-            int16_t plr_z    = (int16_t)state->plr1.p_zoff;
-            int16_t target_y = (int16_t)(state->plr1.p_yoff >> 7);
-            uint8_t vis = can_it_be_seen(&state->level,
-                                         from_room, to_room, plr_zone,
-                                         enemy_x, enemy_z, viewer_y,
-                                         plr_x, plr_z, target_y,
-                                         obj->obj.in_top, 0);
-            if (vis) obj->obj.can_see |= 0x01;
+
+        if (plr_zone == enemy_zone) {
+            /* Same zone: always visible unless this is a two-level zone and
+             * the enemy and player are on different floors. */
+            int same_floor = !zone_has_upper_floor(state, enemy_zone) ||
+                             (obj->obj.in_top == state->plr1.stood_in_top);
+            if (same_floor) obj->obj.can_see |= 0x01;
+        } else {
+            const uint8_t *to_room = level_get_zone_data_ptr(&state->level, plr_zone);
+            if (to_room) {
+                int16_t plr_x    = (int16_t)state->plr1.p_xoff;
+                int16_t plr_z    = (int16_t)state->plr1.p_zoff;
+                int16_t target_y = (int16_t)(state->plr1.p_yoff >> 7);
+                uint8_t vis = can_it_be_seen(&state->level,
+                                             from_room, to_room, plr_zone,
+                                             enemy_x, enemy_z, viewer_y,
+                                             plr_x, plr_z, target_y,
+                                             obj->obj.in_top,
+                                             state->plr1.stood_in_top);
+                if (vis) obj->obj.can_see |= 0x01;
+            }
         }
     }
     /* Player 2 → bit 1 */
     {
         int16_t plr_zone = state->plr2.zone;
-        const uint8_t *to_room = level_get_zone_data_ptr(&state->level, plr_zone);
-        if (to_room) {
-            int16_t plr_x    = (int16_t)state->plr2.p_xoff;
-            int16_t plr_z    = (int16_t)state->plr2.p_zoff;
-            int16_t target_y = (int16_t)(state->plr2.p_yoff >> 7);
-            uint8_t vis = can_it_be_seen(&state->level,
-                                         from_room, to_room, plr_zone,
-                                         enemy_x, enemy_z, viewer_y,
-                                         plr_x, plr_z, target_y,
-                                         obj->obj.in_top, 0);
-            if (vis) obj->obj.can_see |= 0x02;
-        }
-    }
 
-    if (obj->obj.can_see != 0) {
-        printf("[VIS-HIT] type=%d zone=%d plr1_zone=%d pos(%d,%d) plr(%d,%d) can_see=0x%02x\n",
-               (int)obj->obj.number, (int)enemy_zone, (int)state->plr1.zone,
-               (int)enemy_x, (int)enemy_z,
-               (int)(int16_t)state->plr1.p_xoff, (int)(int16_t)state->plr1.p_zoff,
-               (int)obj->obj.can_see);
-    } else if (enemy_zone == state->plr1.zone) {
-        printf("[VIS-SAME-MISS] zone=%d enemy(%d,%d) plr(%d,%d) from=%p to=%p in_top=%d\n",
-               (int)enemy_zone, (int)enemy_x, (int)enemy_z,
-               (int)(int16_t)state->plr1.p_xoff, (int)(int16_t)state->plr1.p_zoff,
-               (void*)from_room,
-               (void*)level_get_zone_data_ptr(&state->level, state->plr1.zone),
-               (int)obj->obj.in_top);
+        if (plr_zone == enemy_zone) {
+            int same_floor = !zone_has_upper_floor(state, enemy_zone) ||
+                             (obj->obj.in_top == state->plr2.stood_in_top);
+            if (same_floor) obj->obj.can_see |= 0x02;
+        } else {
+            const uint8_t *to_room = level_get_zone_data_ptr(&state->level, plr_zone);
+            if (to_room) {
+                int16_t plr_x    = (int16_t)state->plr2.p_xoff;
+                int16_t plr_z    = (int16_t)state->plr2.p_zoff;
+                int16_t target_y = (int16_t)(state->plr2.p_yoff >> 7);
+                uint8_t vis = can_it_be_seen(&state->level,
+                                             from_room, to_room, plr_zone,
+                                             enemy_x, enemy_z, viewer_y,
+                                             plr_x, plr_z, target_y,
+                                             obj->obj.in_top,
+                                             state->plr2.stood_in_top);
+                if (vis) obj->obj.can_see |= 0x02;
+            }
+        }
     }
 }
 
