@@ -2457,6 +2457,7 @@ void explosion_advance(GameState *state)
         } else {
             int rate = (int)state->explosions[i].anim_rate;
             if (rate <= 0) rate = 100;
+            rate = (rate * 50) / 100;  /* slow down explosion animations by half */
             int frac = (int)state->explosions[i].frame_frac + tf * rate;
             while (frac >= 100) {
                 state->explosions[i].frame = (int8_t)(state->explosions[i].frame + 1);
