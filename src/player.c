@@ -1292,6 +1292,10 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
             if (obj_type < 0 || obj_type > 20) continue;
             if (!(enemy_flags & (1u << obj_type))) continue;
 
+            /* Do not target dead enemies (death animation or no lives left) */
+            if (obj_type == (int)OBJ_NBR_DEAD) continue;
+            if (NASTY_LIVES(*obj) <= 0 && obj_type != (int)OBJ_NBR_BARREL) continue;
+
             if (dist < closest_dist) {
                 closest_dist = dist;
                 closest_idx = i;
@@ -1354,9 +1358,13 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
                 if (rand_val * 2 <= scaled_dist_sq)
                     continue; /* pellet missed */
 
-                /* Hit the target */
                 GameObject *target = (GameObject*)(state->level.object_data +
                                      closest_idx * OBJECT_SIZE);
+                /* Do not apply damage to dead enemies */
+                if (target->obj.number == (int8_t)OBJ_NBR_DEAD) continue;
+                if (NASTY_LIVES(*target) <= 0 && target->obj.number != (int8_t)OBJ_NBR_BARREL) continue;
+
+                /* Hit the target */
                 NASTY_SET_DAMAGE(target, (int8_t)(NASTY_DAMAGE(*target) + gun->shot_power));
 
                 /* Impact force on target (push in firing direction) */

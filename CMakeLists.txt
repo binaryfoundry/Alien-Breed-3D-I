@@ -16,17 +16,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/amiga/data/pal")
 endif()
 
 # -----------------------------------------------------------------------
-# Data: ensure data/sounds exists; convert raw 8-bit PCM to .wav at build time
+# Data: ensure data/sounds exists (use Amiga raw files or .wav; no build-time conversion)
 # -----------------------------------------------------------------------
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/data/sounds")
-find_package(Python3 QUIET)
-if(Python3_FOUND)
-  add_custom_target(sounds_to_wav ALL
-    COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tools/raw_to_wav.py"
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    COMMENT "Converting raw sounds to .wav"
-  )
-endif()
 
 # -----------------------------------------------------------------------
 # Data: ensure data/vectorobjects exists and copy from amiga/vectorobjects
@@ -79,10 +71,6 @@ set(SOURCES
 add_executable(ab3d1 ${SOURCES})
 
 target_include_directories(ab3d1 PRIVATE src)
-
-if(TARGET sounds_to_wav)
-  add_dependencies(ab3d1 sounds_to_wav)
-endif()
 
 # Generate sprite_palettes_data.h from data/pal/*.pal (no runtime .pal load)
 set(PAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/data/pal")

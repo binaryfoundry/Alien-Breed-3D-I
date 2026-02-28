@@ -1588,6 +1588,11 @@ void object_handle_bullet(GameObject *obj, GameState *state)
             continue;
         }
 
+        /* Dead enemies (death animation or removed) do not receive shot hits */
+        if (tgt_type == OBJ_NBR_DEAD) {
+            check_idx++;
+            continue;
+        }
         /* Check lives (barrels with 0 lives can still be hit to trigger explosion) */
         if (NASTY_LIVES(*target) <= 0 && tgt_type != OBJ_NBR_BARREL) {
             check_idx++;
