@@ -107,16 +107,16 @@ void explode_into_bits(GameObject *obj, GameState *state)
         SHOT_SET_GRAV(*bit, 40);   /* Amiga: shotgrav = 40 */
         SHOT_SET_FLAGS(*bit, 0);   /* Amiga: shotflags = 0 (no bounce) */
 
-        /* Initialise sprite from first frame of gib anim table */
+        /* Initialise sprite from first frame of gib anim table.
+         * Gib frames in alien sheet are 16x16 each; use 16 so one frame per billboard (animate like plasma). */
         {
             const BulletAnimFrame *f = &bullet_anim_tables[gib_type][0];
             bit->obj.width_or_3d  = f->width;
             bit->obj.world_height = f->height;
             obj_sw(bit->raw + 8,  f->vect_num);
             obj_sw(bit->raw + 10, f->frame_num);
-            /* src_cols/rows 0 → renderer defaults to 32 (matches alien sprite frame size) */
-            bit->raw[14] = 0;
-            bit->raw[15] = 0;
+            bit->raw[14] = 16;
+            bit->raw[15] = 16;
         }
 
         /* Random XZ velocity: Amiga ≈ ±0-3 int units from random angle + impact.
