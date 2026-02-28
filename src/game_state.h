@@ -249,6 +249,9 @@ typedef struct {
     /* Password storage (16 levels * 17 bytes each) */
     char            password_storage[PASSWORD_STORAGE_SIZE];
 
+    /* Current time in ms (set each frame by game loop; used for delayed splash damage) */
+    uint32_t current_ticks_ms;
+
 #define MAX_EXPLOSIONS 16
     /* Active explosion animations (barrel, rocket/grenade impact, explode_into_bits). */
     struct {
@@ -259,6 +262,16 @@ typedef struct {
         int8_t   start_delay; /* ticks before animation starts (variation) */
     } explosions[MAX_EXPLOSIONS];
     int num_explosions;
+
+#define MAX_PENDING_BLASTS 8
+    /* Delayed blast damage (e.g. barrel: short delay before splash). Frame-rate independent. */
+    struct {
+        int32_t  x, z, y;
+        int16_t  radius;
+        int16_t  power;
+        uint32_t trigger_time_ms;
+    } pending_blasts[MAX_PENDING_BLASTS];
+    int num_pending_blasts;
 
 } GameState;
 

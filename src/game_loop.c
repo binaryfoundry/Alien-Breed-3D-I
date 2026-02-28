@@ -84,6 +84,7 @@ void game_loop(GameState *state)
          * ================================================================ */
         {
             Uint32 now = SDL_GetTicks();
+            state->current_ticks_ms = (uint32_t)now;
             Uint32 elapsed = now - last_ticks;
             last_ticks = now;
 

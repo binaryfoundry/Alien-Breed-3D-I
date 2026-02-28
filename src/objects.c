@@ -613,6 +613,19 @@ static void enemy_generic(GameObject *obj, GameState *state, int param_index)
  * ----------------------------------------------------------------------- */
 void objects_update(GameState *state)
 {
+    /* Process delayed blasts (barrel splash etc.) - frame-rate independent */
+    for (int i = 0; i < state->num_pending_blasts; ) {
+        if (state->current_ticks_ms >= state->pending_blasts[i].trigger_time_ms) {
+            compute_blast(state,
+                state->pending_blasts[i].x, state->pending_blasts[i].z, state->pending_blasts[i].y,
+                state->pending_blasts[i].radius, state->pending_blasts[i].power);
+            state->num_pending_blasts--;
+            state->pending_blasts[i] = state->pending_blasts[state->num_pending_blasts];
+            continue;
+        }
+        i++;
+    }
+
     /* 1. Update player zones (from room pointer if available) */
     /* Zone is already maintained by player_full_control -> MoveObject */
 
@@ -1176,8 +1189,16 @@ void object_handle_barrel(GameObject *obj, GameState *state)
 
         OBJ_SET_ZONE(obj, -1);
 
-        /* Area damage: Amiga passes d0=40 as max damage; effective radius ~280 world units */
-        compute_blast(state, bx, bz, 0, 280, 40);
+        /* Area damage after a short delay (frame-rate independent), so blast follows the visual */
+        if (state->num_pending_blasts < MAX_PENDING_BLASTS) {
+            int i = state->num_pending_blasts++;
+            state->pending_blasts[i].x = (int32_t)bx;
+            state->pending_blasts[i].z = (int32_t)bz;
+            state->pending_blasts[i].y = 0;
+            state->pending_blasts[i].radius = 280;
+            state->pending_blasts[i].power = 40;
+            state->pending_blasts[i].trigger_time_ms = state->current_ticks_ms + 100;  /* 100 ms delay */
+        }
 
         audio_play_sample(15, 300);
     } else {
