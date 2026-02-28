@@ -1994,9 +1994,11 @@ void lift_routine(GameState *state)
         if (lift_vel != 0 && prev_lift_vel == 0)
             audio_play_sample(5, 64);  /* newdoor: play when lift starts moving (same as door) */
 
+        int32_t old_pos = lift_pos;
         lift_pos += (int32_t)lift_vel * state->temp_frames * 64;
         if (lift_pos < lift_top) lift_pos = lift_top;
         if (lift_pos > lift_bot) lift_pos = lift_bot;
+        int32_t lift_delta = lift_pos - old_pos;
 
         wbe32(lift + 4, lift_pos);
         wbe16(lift + 8, lift_vel);
@@ -2007,17 +2009,23 @@ void lift_routine(GameState *state)
             level_set_zone_roof(&state->level, (int16_t)zone_id, lift_top);
         }
 
-        /* Accumulate max floor per zone (×64) for apply and player Y. */
-        /*if (zone_id >= 0 && zone_id < state->level.num_zones && (unsigned)zone_id < 256u) {
-            if (!zone_lift_seen[zone_id]) {
-                zone_max_floor[zone_id] = lift_pos_64;
-                zone_lift_seen[zone_id] = 1;
-            } else if (lift_pos_64 > zone_max_floor[zone_id]) {
-                zone_max_floor[zone_id] = lift_pos_64;
+        /* Amiga: move players with the lift.
+         * lift_pos and s_yoff share the same coordinate system (both come from/write to zone
+         * data in the same scale), so adding lift_delta keeps the player glued to the platform. */
+        if (lift_delta != 0) {
+            if (plr1_on) {
+                state->plr1.s_yoff  += lift_delta;
+                state->plr1.s_tyoff += lift_delta;
+                state->plr1.s_yvel   = 0;
             }
-        }*/
+            if (plr2_on) {
+                state->plr2.s_yoff  += lift_delta;
+                state->plr2.s_tyoff += lift_delta;
+                state->plr2.s_yvel   = 0;
+            }
+        }
 
-        /* Amiga-style: patch floor line 14 and graphics wall record. Write ×64 to match door wall layout. */
+        /* Amiga-style: patch floor line 14 and graphics wall record. */
         if (state->level.lift_wall_list && state->level.lift_wall_list_offsets &&
             state->level.graphics && lift_idx < state->level.num_lifts) {
             uint32_t start = state->level.lift_wall_list_offsets[lift_idx];
@@ -2028,7 +2036,7 @@ void lift_routine(GameState *state)
                 int32_t gfx_off = (int32_t)be32(ent + 2);
                 if (state->level.floor_lines && fline >= 0 && (int32_t)fline < state->level.num_floor_lines) {
                     uint8_t *fl = state->level.floor_lines + (uint32_t)(int16_t)fline * 16u;
-                    wbe16(fl + 14, (int16_t)(uint16_t)0x8000); // TODO read old value for hit sound
+                    wbe16(fl + 14, (int16_t)(uint16_t)0x8000);
                 }
                 if (gfx_off >= 0) {
                     uint8_t *wall_rec = state->level.graphics + (uint32_t)gfx_off;
@@ -2040,20 +2048,6 @@ void lift_routine(GameState *state)
         lift_idx++;
         lift += LIFT_ENTRY_SIZE;
     }
-
-    /* Apply zone floors once per zone (×64 scale, same as ZD_ROOF for doors). */
-    ////for (int z = 0; z < state->level.num_zones && z < 256; z++) {
-    //    if (zone_lift_seen[z])
-    //        level_set_zone_floor(&state->level, (int16_t)z, zone_max_floor[z]);
-    //}
-
-    /* Player Y when standing on lift (zone_max_floor is ×64, same as ZD_FLOOR / player.c floor_h). */
-    //if (state->plr1.stood_on_lift && state->plr1.zone >= 0 && state->plr1.zone < 256 &&
-    //    zone_lift_seen[state->plr1.zone])
-    //    state->plr1.s_tyoff = zone_max_floor[state->plr1.zone] - state->plr1.s_height;
-    //if (state->plr2.stood_on_lift && state->plr2.zone >= 0 && state->plr2.zone < 256 &&
-   //    zone_lift_seen[state->plr2.zone])
-    //    state->plr2.s_tyoff = zone_max_floor[state->plr2.zone] - state->plr2.s_height;
 }
 
 
