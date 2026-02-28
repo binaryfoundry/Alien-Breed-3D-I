@@ -965,9 +965,8 @@ void object_handle_barrel(GameObject *obj, GameState *state)
 
     if (lives <= 0) {
         /* Get position and zone before removing object */
-        int idx = (int)(((uint8_t*)obj - state->level.object_data) / OBJECT_SIZE);
         int16_t bx, bz;
-        get_object_pos(&state->level, idx, &bx, &bz);
+        get_object_pos(&state->level, (int)OBJ_CID(obj), &bx, &bz);
         int16_t zone = OBJ_ZONE(obj);
         int32_t y_floor = ((int32_t)obj_w(obj->raw + 4) + (int32_t)(int8_t)obj->raw[7]) << 7;
         if ((int8_t)obj->raw[7] == 0) y_floor = ((int32_t)obj_w(obj->raw + 4) + 32) << 7;
@@ -986,8 +985,8 @@ void object_handle_barrel(GameObject *obj, GameState *state)
 
         OBJ_SET_ZONE(obj, -1);
 
-        /* Area damage (radius 40, from Anims.s ItsABarrel) */
-        compute_blast(state, bx, bz, 0, 40, 8);
+        /* Area damage: Amiga passes d0=40 as max damage; effective radius ~280 world units */
+        compute_blast(state, bx, bz, 0, 280, 40);
 
         audio_play_sample(15, 300);
     } else {
@@ -2142,7 +2141,7 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
         }
 
         int16_t ox, oz;
-        get_object_pos(&state->level, obj_index, &ox, &oz);
+        get_object_pos(&state->level, (int)OBJ_CID(obj), &ox, &oz);
 
         int32_t dx = x - ox;
         int32_t dz = z - oz;

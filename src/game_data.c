@@ -307,9 +307,9 @@ const ObjectWorldSize default_object_world_size[21] = {
 const BulletTypeData bullet_types[8] = {
     /* Type 0: Plasma bolt    */ { 0x10, 0x10,  0,  -1,   0 },
     /* Type 1: Plasma bolt2   */ { 0x08, 0x08,  0,  -1,   0 },
-    /* Type 2: Rocket         */ { 0x10, 0x10, 64,  15, 300 },
-    /* Type 3: Flame          */ { 0x10, 0x10,  0,  -1,   0 },
-    /* Type 4: Grenade        */ { 0x10, 0x10, 40,   9, 200 },
+    /* Type 2: Rocket         */ { 0x10, 0x10, 280,  15, 300 },
+    /* Type 3: Flame          */ { 0x10, 0x10,   0,  -1,   0 },
+    /* Type 4: Grenade        */ { 0x10, 0x10, 200,   9, 200 },
     /* Type 5: Worm spit      */ { 0x08, 0x08,  0,  -1,   0 },
     /* Type 6: Marine shot    */ { 0x20, 0x20,  0,   3, 100 },
     /* Type 7: Big shot       */ { 0x20, 0x20,  0,  -1,   0 },
