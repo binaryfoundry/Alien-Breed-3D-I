@@ -62,9 +62,8 @@ void go_in_direction(int32_t *newx, int32_t *newz,
 void explode_into_bits(GameObject *obj, GameState *state)
 {
     /* Translated from Anims.s ExplodeIntoBits (line ~75-196).
-     * Creates 7-9 debris fragments in NastyShotData with random velocities. */
-    audio_play_sample(15, 300);
-
+     * Creates 7-9 debris fragments (gibs) in NastyShotData with random velocities.
+     * No explosion sound here: death sound (e.g. splatpop) is played by enemy_check_damage. */
     if (!state || !state->level.nasty_shot_data) return;
 
     int num_bits = 7 + (rand() & 3); /* 7-9 pieces */
