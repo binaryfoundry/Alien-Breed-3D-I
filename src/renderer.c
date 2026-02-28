@@ -1192,8 +1192,11 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
 
     for (int dx = 0; dx < width; dx++) {
         int screen_col = sx + dx;
-        if (screen_col < g_renderer.left_clip ||
-            screen_col >= g_renderer.right_clip) continue;
+        /* Horizontal: clamp to screen bounds only.
+         * Portal left_clip/right_clip are intentionally NOT applied here: sprites are blitter
+         * objects on the Amiga and are not portal-clipped. Nearer zones overwrite via painter's
+         * algorithm, so applying portal clip produces hard horizontal cuts at portal edges. */
+        if (screen_col < 0 || screen_col >= rw) continue;
 
         /* Map screen column to source column 0..eff_cols-1 */
         int src_col = (width > 1) ? (dx * eff_cols) / width : 0;
