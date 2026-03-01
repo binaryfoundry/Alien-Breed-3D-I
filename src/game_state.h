@@ -135,7 +135,6 @@ typedef struct {
     uint8_t *nasty_shot_data;
     uint8_t *other_nasty_data;
     uint8_t *object_points;
-    uint8_t *nasty_shot_points;  /* 20*8 bytes: XZ per nasty_shot slot; avoids sharing object_points with level objects */
     uint8_t *plr1_obj;           /* pointer to player 1 object in object data */
     uint8_t *plr2_obj;           /* pointer to player 2 object in object data */
     uint8_t *connect_table;
@@ -146,8 +145,6 @@ typedef struct {
     uint8_t *list_of_graph_rooms; /* ListOfGraphRooms - rooms visible from current */
     uint8_t *floor_tile;          /* floortile - 256x256 floor texture sheet */
 
-    /* When true, object_data was allocated by level_parse and must be freed */
-    bool object_data_owned;
     /* When true, door_data / switch_data / lift_data / zone_adds were allocated by level_parse and must be freed */
     bool door_data_owned;
     bool switch_data_owned;

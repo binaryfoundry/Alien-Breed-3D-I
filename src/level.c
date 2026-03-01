@@ -390,38 +390,9 @@ int level_parse(LevelState *level)
     int32_t floor_offset = read_long(ld + 26);
     level->floor_lines = ld + floor_offset;
 
-    /* Long 30: Offset to object data.
-     * Copy to separate buffer so runtime updates (object_handle_ammo vect/frame, etc.)
-     * never corrupt adjacent structures; also avoids overlap with nasty_shot_data. */
+    /* Long 30: Offset to object data */
     int32_t obj_offset = read_long(ld + 30);
-    const uint8_t *obj_src = ld + obj_offset;
-    {
-        int obj_count = 0;
-        while (obj_count < 80) {
-            if (read_word(obj_src + obj_count * OBJECT_SIZE + 0) < 0) break;
-            obj_count++;
-        }
-        obj_count++;  /* include terminator */
-        uint8_t *obj_copy = (uint8_t *)malloc((size_t)obj_count * OBJECT_SIZE);
-        if (obj_copy) {
-            memcpy(obj_copy, obj_src, (size_t)obj_count * OBJECT_SIZE);
-            level->object_data = obj_copy;
-            level->object_data_owned = true;
-            /* plr1_obj, plr2_obj point into object list; rebase to our copy */
-            int32_t plr1_off = read_long(ld + 46);
-            int32_t plr2_off = read_long(ld + 50);
-            int32_t obj_size = obj_count * OBJECT_SIZE;
-            int32_t p1 = plr1_off - obj_offset;
-            int32_t p2 = plr2_off - obj_offset;
-            level->plr1_obj = (p1 >= 0 && p1 < obj_size) ? obj_copy + p1 : obj_copy;
-            level->plr2_obj = (p2 >= 0 && p2 < obj_size) ? obj_copy + p2 : obj_copy + OBJECT_SIZE;
-        } else {
-            level->object_data = (uint8_t *)obj_src;
-            level->object_data_owned = false;
-            level->plr1_obj = ld + read_long(ld + 46);
-            level->plr2_obj = ld + read_long(ld + 50);
-        }
-    }
+    level->object_data = ld + obj_offset;
 
     /* Number of floor lines: derived at runtime (do not trust header). Amiga indexes with *16 so 16 bytes per line.
      * 1) Layout: how many 16-byte slots fit between floor block and object data.
@@ -453,30 +424,23 @@ int level_parse(LevelState *level)
     int32_t pshot_offset = read_long(ld + 34);
     level->player_shot_data = ld + pshot_offset;
 
-    /* Long 38: Offset to nasty shot data.
-     * Use a separate buffer so explode_into_bits memset() never corrupts object_data
-     * (they can overlap in the level file). */
-    {
-        uint8_t *nasty_copy = (uint8_t *)calloc(20 * OBJECT_SIZE, 1);
-        if (nasty_copy) {
-            for (int i = 0; i < 20; i++) {
-                write_word_be(nasty_copy + i * OBJECT_SIZE + 12, -1);  /* zone = -1 (inactive) */
-            }
-            level->nasty_shot_data = nasty_copy;
-            level->other_nasty_data = NULL;  /* not used when we allocate; stub_io sets it for test level */
-        } else {
-            level->nasty_shot_data = ld + read_long(ld + 38);
-            level->other_nasty_data = level->nasty_shot_data + 64 * 20;
-        }
-    }
-    /* Bullet/gib XZ positions live here so they don't overwrite level object_points */
-    level->nasty_shot_points = (uint8_t *)calloc(20 * 8, 1);
+    /* Long 38: Offset to nasty shot data */
+    int32_t nshot_offset = read_long(ld + 38);
+    level->nasty_shot_data = ld + nshot_offset;
+    /* Other nasty data follows: 64*20 bytes after nasty shots */
+    level->other_nasty_data = level->nasty_shot_data + 64 * 20;
 
     /* Long 42: Offset to object points */
     int32_t objpts_offset = read_long(ld + 42);
     level->object_points = ld + objpts_offset;
 
-    /* plr1_obj, plr2_obj set above in object_data block */
+    /* Long 46: Offset to player 1 object */
+    int32_t plr1_offset = read_long(ld + 46);
+    level->plr1_obj = ld + plr1_offset;
+
+    /* Long 50: Offset to player 2 object */
+    int32_t plr2_offset = read_long(ld + 50);
+    level->plr2_obj = ld + plr2_offset;
 
     printf("[LEVEL] Parsed: %d zones, %d points, %d obj_points, %d floor_lines\n",
            level->num_zones, num_points, level->num_object_points, level->num_floor_lines);

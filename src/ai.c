@@ -83,10 +83,11 @@ void explode_into_bits(GameObject *obj, GameState *state)
         }
         if (!bit || slot_j < 0) break;
 
-        /* Use dedicated point index so gib position does not overwrite level object_points. */
-        int16_t gib_cid = (int16_t)(state->level.num_object_points + slot_j);
+        /* Preserve the slot's pre-assigned CID (from level data) before clearing,
+         * just like player bullets do - it is the index into object_points for this slot. */
+        int16_t saved_cid = OBJ_CID(bit);
         memset(bit, 0, OBJECT_SIZE);
-        OBJ_SET_CID(bit, gib_cid);
+        OBJ_SET_CID(bit, saved_cid);
         bit->obj.number = OBJ_NBR_BULLET;
         OBJ_SET_ZONE(bit, OBJ_ZONE(obj));
         bit->obj.in_top = obj->obj.in_top;
@@ -126,21 +127,22 @@ void explode_into_bits(GameObject *obj, GameState *state)
         /* Y velocity: upward, Amiga range -(256 + rand & 1023) = -256 to -1279 */
         SHOT_SET_YVEL(*bit, (int16_t)(-(256 + (rand() & 1023))));
 
-        /* Store XZ position in nasty_shot_points[slot_j] so level object_points are untouched */
-        if (state->level.nasty_shot_points && state->level.object_points) {
+        /* Copy XZ position from source object */
+        if (state->level.object_points) {
             int src_idx = (int)OBJ_CID(obj);
-            if (src_idx >= 0 && src_idx < state->level.num_object_points) {
-                const uint8_t *sp = state->level.object_points + src_idx * 8;
-                uint8_t *dp = state->level.nasty_shot_points + slot_j * 8;
-                obj_sw(dp,     obj_w(sp));
-                obj_sw(dp + 4, obj_w(sp + 4));
+            int dst_idx = (int)OBJ_CID(bit);
+            if (src_idx >= 0 && dst_idx >= 0 &&
+                src_idx < state->level.num_object_points && dst_idx < state->level.num_object_points) {
+                uint8_t *sp = state->level.object_points + src_idx * 8;
+                uint8_t *dp = state->level.object_points + dst_idx * 8;
+                memcpy(dp, sp, 2); memcpy(dp + 4, sp + 4, 2);
             }
         }
 
         bit->obj.worry = 127;
 
-        printf("[GIB] slot=%d gib_cid=%d zone=%d gib_type=%d num_pts=%d yvel=%d accypos=%d\n",
-               slot_j, (int)gib_cid, (int)OBJ_ZONE(bit), (int)gib_type,
+        printf("[GIB] slot=%d saved_cid=%d zone=%d gib_type=%d num_pts=%d yvel=%d accypos=%d\n",
+               slot_j, (int)saved_cid, (int)OBJ_ZONE(bit), (int)gib_type,
                state->level.num_object_points,
                (int)SHOT_YVEL(*bit), (int)SHOT_ACCYPOS(*bit));
     }

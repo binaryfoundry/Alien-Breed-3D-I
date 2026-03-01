@@ -478,34 +478,6 @@ void renderer_rotate_object_pts(GameState *state)
         r->obj_rotated[pt].z = (int32_t)vz16;
         r->obj_rotated[pt].x_fine = vx_fine;
     }
-
-    /* Rotate nasty_shot_points (bullets/gibs) into obj_rotated[num_pts..num_pts+19] */
-    if (state->level.nasty_shot_points && num_pts + 20 <= MAX_OBJ_POINTS) {
-        const uint8_t *npts = state->level.nasty_shot_points;
-        for (int slot = 0; slot < 20; slot++) {
-            int pt = num_pts + slot;
-            int16_t px = rd16(npts + slot * 8);
-            int16_t pz = rd16(npts + slot * 8 + 4);
-
-            int16_t dx = (int16_t)(px - cam_x);
-            int16_t dz = (int16_t)(pz - cam_z);
-
-            int32_t vx = (int32_t)dx * cos_v - (int32_t)dz * sin_v;
-            vx <<= 1;
-            int16_t vx16 = (int16_t)(vx >> 16);
-
-            int32_t vz = (int32_t)dx * sin_v + (int32_t)dz * cos_v;
-            vz <<= 2;
-            int16_t vz16 = (int16_t)(vz >> 16);
-
-            int32_t vx_fine = (int32_t)vx16 << 7;
-            vx_fine += r->xwobble;
-
-            r->obj_rotated[pt].x = vx16;
-            r->obj_rotated[pt].z = (int32_t)vz16;
-            r->obj_rotated[pt].x_fine = vx_fine;
-        }
-    }
 }
 
 /* -----------------------------------------------------------------------
@@ -1598,8 +1570,7 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
     int32_t y_off = r->yoff;
 
     /* Build depth-sorted list of objects in this zone (and on this floor when level_filter >= 0).
-     * idx 0..79 = object_data; idx 80..99 = nasty_shot_data slot (bullets/gibs).
-     * Bullets/gibs use pt_num = num_pts+slot (nasty_shot_points), not level object_points. */
+     * idx 0..79 = object_data; idx 80..99 = nasty_shot_data slot (bullets/gibs). */
     typedef struct { int idx; int32_t z; } ObjEntry;
     ObjEntry objs[100];
     int obj_count = 0;
@@ -1643,16 +1614,12 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
     /* Add nasty_shot_data bullets/gibs (same zone, depth-sorted with level objects). */
     if (level->nasty_shot_data && obj_count < 100) {
         const uint8_t *shots = level->nasty_shot_data;
-        int num_pts_nasty = num_pts + (level->nasty_shot_points ? 20 : 0);
         for (int slot = 0; slot < 20 && obj_count < 100; slot++) {
             const uint8_t *obj = shots + slot * OBJECT_SIZE;
             if (rd16(obj + 12) < 0) continue; /* OBJ_ZONE */
             if ((int8_t)obj[16] != OBJ_NBR_BULLET) continue;
             int16_t pt_num = rd16(obj);
-            if (pt_num < 0) continue;
-            /* Bullets/gibs use dedicated range num_pts..num_pts+19 (nasty_shot_points) */
-            if (pt_num < num_pts) continue;
-            if (!level->nasty_shot_points || pt_num >= num_pts_nasty) continue;
+            if (pt_num < 0 || (unsigned)pt_num >= (unsigned)num_pts) continue;
             if (rd16(obj + 12) != (int16_t)zone_id) continue;
             ObjRotatedPoint *orp = &r->obj_rotated[pt_num];
             if (orp->z <= 0) continue;
@@ -1695,8 +1662,7 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         if ((uint8_t)obj[6] == (uint8_t)OBJ_3D_SPRITE) continue;
 
         int16_t pt_num = rd16(obj);
-        int max_pt = num_pts + (level->nasty_shot_points ? 20 : 0);
-        if (pt_num < 0 || pt_num >= max_pt) continue;
+        if ((unsigned)pt_num >= (unsigned)num_pts) continue;
         ObjRotatedPoint *orp = &r->obj_rotated[pt_num];
 
         /* Use actual view Z for size so sprites scale at all distances. Guard only vs div-by-zero. */

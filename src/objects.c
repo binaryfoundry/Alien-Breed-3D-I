@@ -173,20 +173,11 @@ static GameObject *get_object(LevelState *level, int index)
     return (GameObject *)(level->object_data + index * OBJECT_SIZE);
 }
 
-/* Get object X/Z position from ObjectPoints array (big-endian).
- * Indices num_object_points..num_object_points+19 are nasty_shot slots and
- * read from nasty_shot_points so bullets/gibs never share level object_points. */
+/* Get object X/Z position from ObjectPoints array (big-endian) */
 static void get_object_pos(const LevelState *level, int index,
                            int16_t *x, int16_t *z)
 {
-    int np = (int)level->num_object_points;
-    if (level->nasty_shot_points && index >= np && index < np + 20) {
-        const uint8_t *p = level->nasty_shot_points + (index - np) * 8;
-        *x = obj_w(p);
-        *z = obj_w(p + 4);
-        return;
-    }
-    if (level->object_points && index >= 0 && index < np) {
+    if (level->object_points) {
         const uint8_t *p = level->object_points + index * 8;
         *x = obj_w(p);
         *z = obj_w(p + 4);
@@ -1131,43 +1122,39 @@ void object_handle_gas_pipe(GameObject *obj, GameState *state)
     }
     if (!bullet) return;
 
-    {
-        int slot_i = (int)((const uint8_t *)bullet - shots) / OBJECT_SIZE;
-        int16_t flame_cid = (int16_t)(state->level.num_object_points + slot_i);
-        OBJ_SET_CID(bullet, flame_cid);
-        bullet->obj.number = OBJ_NBR_BULLET;
-        OBJ_SET_ZONE(bullet, OBJ_ZONE(obj));
-        int16_t src_y = (int16_t)((obj->raw[4] << 8) | obj->raw[5]);
-        src_y -= 80;
-        bullet->raw[4] = (uint8_t)(src_y >> 8);
-        bullet->raw[5] = (uint8_t)(src_y);
-        SHOT_SET_ACCYPOS(*bullet, (int32_t)src_y << 7);
-        SHOT_STATUS(*bullet) = 0;
-        SHOT_SET_YVEL(*bullet, 0);
-        SHOT_SIZE(*bullet) = 3;
-        SHOT_SET_FLAGS(*bullet, 0);
-        SHOT_SET_GRAV(*bullet, 0);
-        SHOT_POWER(*bullet) = 7;
-        SHOT_SET_LIFE(*bullet, 0);
+    bullet->obj.number = OBJ_NBR_BULLET;
+    OBJ_SET_ZONE(bullet, OBJ_ZONE(obj));
+    int16_t src_y = (int16_t)((obj->raw[4] << 8) | obj->raw[5]);
+    src_y -= 80;
+    bullet->raw[4] = (uint8_t)(src_y >> 8);
+    bullet->raw[5] = (uint8_t)(src_y);
+    SHOT_SET_ACCYPOS(*bullet, (int32_t)src_y << 7);
+    SHOT_STATUS(*bullet) = 0;
+    SHOT_SET_YVEL(*bullet, 0);
+    SHOT_SIZE(*bullet) = 3;
+    SHOT_SET_FLAGS(*bullet, 0);
+    SHOT_SET_GRAV(*bullet, 0);
+    SHOT_POWER(*bullet) = 7;
+    SHOT_SET_LIFE(*bullet, 0);
 
-        /* Copy position from gas pipe to bullet in nasty_shot_points */
-        if (state->level.nasty_shot_points && state->level.object_data) {
-            int self_idx = (int)OBJ_CID(obj);
-            int16_t px = 0, pz = 0;
-            get_object_pos(&state->level, self_idx, &px, &pz);
-            uint8_t *dp = state->level.nasty_shot_points + slot_i * 8;
-            obj_sw(dp,     px);
-            obj_sw(dp + 4, pz);
+    /* Copy position from gas pipe to bullet in ObjectPoints */
+    if (state->level.object_points && state->level.object_data) {
+        int self_idx = (int)(((uint8_t*)obj - state->level.object_data) / OBJECT_SIZE);
+        int bul_idx = (int)OBJ_CID(bullet);
+        if (bul_idx >= 0) {
+            uint8_t *sp = state->level.object_points + self_idx * 8;
+            uint8_t *dp = state->level.object_points + bul_idx * 8;
+            memcpy(dp, sp, 8);
         }
-
-        int16_t facing = NASTY_FACING(*obj);
-        int16_t s = sin_lookup(facing);
-        int16_t c_val = cos_lookup(facing);
-        SHOT_SET_XVEL(*bullet, (int16_t)(((int32_t)s << 4) >> 16));
-        SHOT_SET_ZVEL(*bullet, (int16_t)(((int32_t)c_val << 4) >> 16));
-        NASTY_SET_EFLAGS(*bullet, 0x00100020);
-        bullet->obj.worry = 127;
     }
+
+    int16_t facing = NASTY_FACING(*obj);
+    int16_t s = sin_lookup(facing);
+    int16_t c = cos_lookup(facing);
+    SHOT_SET_XVEL(*bullet, (int16_t)(((int32_t)s << 4) >> 16));
+    SHOT_SET_ZVEL(*bullet, (int16_t)(((int32_t)c << 4) >> 16));
+    NASTY_SET_EFLAGS(*bullet, 0x00100020);
+    bullet->obj.worry = 127;
 }
 
 /* -----------------------------------------------------------------------
@@ -1433,16 +1420,15 @@ void object_handle_bullet(GameObject *obj, GameState *state)
         SHOT_SET_YVEL(*obj, yvel);
     }
 
-    /* Position is in nasty_shot_points (CID = num_object_points+slot) or object_points. */
+    /* Position is in object_points at OBJ_CID (works for both object_data and nasty_shot_data bullets). */
     int idx = (int)OBJ_CID(obj);
-    {
-        int np = state->level.num_object_points;
-        bool in_level  = (idx >= 0 && idx < np);
-        bool in_nasty  = (state->level.nasty_shot_points && idx >= np && idx < np + 20);
-        if (!in_level && !in_nasty) {
-            OBJ_SET_ZONE(obj, -1);
-            return;
+    if (idx < 0 || (state->level.object_points && idx >= state->level.num_object_points)) {
+        if (shot_size >= 50) {
+            printf("[GIB-KILL] CID=%d out of range (num_pts=%d) size=%d\n",
+                   idx, state->level.num_object_points, (int)shot_size);
         }
+        OBJ_SET_ZONE(obj, -1);
+        return;
     }
     int16_t bx, bz;
     get_object_pos(&state->level, idx, &bx, &bz);
@@ -1581,18 +1567,11 @@ void object_handle_bullet(GameObject *obj, GameState *state)
         return;
     }
 
-    /* Update position: bullets/gibs use nasty_shot_points so level object_points are not overwritten */
-    {
-        int np = (int)state->level.num_object_points;
-        if (state->level.nasty_shot_points && idx >= np && idx < np + 20) {
-            uint8_t *pts = state->level.nasty_shot_points + (idx - np) * 8;
-            obj_sw(pts, (int16_t)ctx.newx);
-            obj_sw(pts + 4, (int16_t)ctx.newz);
-        } else if (state->level.object_points && idx >= 0 && idx < np) {
-            uint8_t *pts = state->level.object_points + idx * 8;
-            obj_sw(pts, (int16_t)ctx.newx);
-            obj_sw(pts + 4, (int16_t)ctx.newz);
-        }
+    /* Update position in ObjectPoints */
+    if (state->level.object_points) {
+        uint8_t *pts = state->level.object_points + idx * 8;
+        obj_sw(pts, (int16_t)ctx.newx);
+        obj_sw(pts + 4, (int16_t)ctx.newz);
     }
 
     /* Update render Y (obj[4]) from accypos so bullets/gibs draw at correct height */
@@ -2293,11 +2272,8 @@ void enemy_fire_at_player(GameObject *obj, GameState *state,
     }
     if (!bullet) return;
 
-    int slot_i = (int)((const uint8_t *)bullet - shots) / OBJECT_SIZE;
-    int16_t bullet_cid = (int16_t)(state->level.num_object_points + slot_i);
-
     /* Calculate direction to player (AlienControl.s FireAtPlayer1 lines 360-411) */
-    int idx = (int)OBJ_CID(obj);
+    int idx = (int)(((uint8_t*)obj - state->level.object_data) / OBJECT_SIZE);
     int16_t obj_x, obj_z;
     get_object_pos(&state->level, idx, &obj_x, &obj_z);
 
@@ -2318,9 +2294,8 @@ void enemy_fire_at_player(GameObject *obj, GameState *state,
         plr_z += lead_z;
     }
 
-    /* Set up bullet (use dedicated point so we don't overwrite level object_points) */
+    /* Set up bullet */
     memset(bullet, 0, OBJECT_SIZE);
-    OBJ_SET_CID(bullet, bullet_cid);
     OBJ_SET_ZONE(bullet, OBJ_ZONE(obj));
     bullet->obj.number = OBJ_NBR_BULLET;
 
@@ -2334,9 +2309,10 @@ void enemy_fire_at_player(GameObject *obj, GameState *state,
     int16_t xvel = (int16_t)(hctx.newx - obj_x);
     int16_t zvel = (int16_t)(hctx.newz - obj_z);
 
-    /* Store bullet position in nasty_shot_points (never in object_points) */
-    if (state->level.nasty_shot_points) {
-        uint8_t *pts = state->level.nasty_shot_points + slot_i * 8;
+    /* Copy bullet position to ObjectPoints */
+    int bul_idx = (int)OBJ_CID(bullet);
+    if (state->level.object_points && bul_idx >= 0) {
+        uint8_t *pts = state->level.object_points + bul_idx * 8;
         obj_sw(pts, (int16_t)hctx.newx);
         obj_sw(pts + 4, (int16_t)hctx.newz);
     }
@@ -2509,8 +2485,9 @@ int pickup_distance_check(GameObject *obj, GameState *state, int player_num)
 {
     PlayerState *plr = (player_num == 1) ? &state->plr1 : &state->plr2;
 
+    int idx = (int)(((uint8_t*)obj - state->level.object_data) / OBJECT_SIZE);
     int16_t ox, oz;
-    get_object_pos(&state->level, (int)OBJ_CID(obj), &ox, &oz);
+    get_object_pos(&state->level, idx, &ox, &oz);
 
     int32_t dx = plr->p_xoff - ox;
     int32_t dz = plr->p_zoff - oz;
@@ -2531,14 +2508,13 @@ void use_player1(GameState *state)
 
     GameObject *plr_obj = (GameObject*)state->level.plr1_obj;
 
-    /* Update position in ObjectPoints — use CID (point index), not array index */
+    /* Update position in ObjectPoints */
+    int idx = 0;
     if (state->level.object_points) {
-        int cid = (int)OBJ_CID((GameObject*)state->level.plr1_obj);
-        if (cid >= 0 && cid < state->level.num_object_points) {
-            uint8_t *pts = state->level.object_points + cid * 8;
-            obj_sw(pts, (int16_t)(state->plr1.xoff >> 16));
-            obj_sw(pts + 4, (int16_t)(state->plr1.zoff >> 16));
-        }
+        idx = (int)(state->level.plr1_obj - state->level.object_data) / OBJECT_SIZE;
+        uint8_t *pts = state->level.object_points + idx * 8;
+        obj_sw(pts, (int16_t)(state->plr1.xoff >> 16));
+        obj_sw(pts + 4, (int16_t)(state->plr1.zoff >> 16));
     }
 
     /* Update zone */
@@ -2599,13 +2575,12 @@ void use_player2(GameState *state)
 
     GameObject *plr_obj = (GameObject*)state->level.plr2_obj;
 
+    int idx = 0;
     if (state->level.object_points) {
-        int cid = (int)OBJ_CID((GameObject*)state->level.plr2_obj);
-        if (cid >= 0 && cid < state->level.num_object_points) {
-            uint8_t *pts = state->level.object_points + cid * 8;
-            obj_sw(pts, (int16_t)(state->plr2.xoff >> 16));
-            obj_sw(pts + 4, (int16_t)(state->plr2.zoff >> 16));
-        }
+        idx = (int)(state->level.plr2_obj - state->level.object_data) / OBJECT_SIZE;
+        uint8_t *pts = state->level.object_points + idx * 8;
+        obj_sw(pts, (int16_t)(state->plr2.xoff >> 16));
+        obj_sw(pts + 4, (int16_t)(state->plr2.zoff >> 16));
     }
 
     OBJ_SET_ZONE(plr_obj, state->plr2.zone);

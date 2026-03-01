@@ -1394,9 +1394,8 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
 
         if (!bullet) return; /* No free slot */
 
-        /* Use dedicated point index so bullet never overwrites level object_points */
-        int slot_i = (int)((const uint8_t *)bullet - shots) / OBJECT_SIZE;
-        int16_t bullet_cid = (int16_t)(state->level.num_object_points + slot_i);
+        /* Save CID before memset (it's baked into the slot by level data) */
+        int16_t saved_cid = OBJ_CID(bullet);
 
         /* Set up bullet */
         memset(bullet, 0, OBJECT_SIZE);
@@ -1407,9 +1406,10 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         int16_t spawn_x = (int16_t)(plr->p_xoff + ((sin_val * 32) >> 14));
         int16_t spawn_z = (int16_t)(plr->p_zoff + ((cos_val * 32) >> 14));
 
-        obj_sw(bullet->raw, bullet_cid);
-        if (state->level.nasty_shot_points) {
-            uint8_t *pt = state->level.nasty_shot_points + slot_i * 8;
+        /* Restore CID and write spawn position into that object point */
+        obj_sw(bullet->raw, saved_cid);
+        if (saved_cid >= 0 && state->level.object_points) {
+            uint8_t *pt = state->level.object_points + (int)saved_cid * 8;
             obj_sw(pt,     spawn_x);
             obj_sw(pt + 4, spawn_z);
         }

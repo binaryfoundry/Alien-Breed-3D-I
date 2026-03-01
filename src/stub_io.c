@@ -382,7 +382,6 @@ static void build_test_level_data(LevelState *level)
     level->points = buf + off_points;
     level->floor_lines = buf + off_flines;
     level->object_data = buf + off_obj_data;
-    level->object_data_owned = false;  /* points into buf, not allocated */
     level->object_points = buf + off_obj_points;
     level->plr1_obj = buf + off_obj_data;
     level->plr2_obj = buf + off_obj_data + OBJECT_SIZE;
@@ -418,7 +417,6 @@ static void build_test_level_data(LevelState *level)
             level->nasty_shot_data = nasty_buf;
             level->other_nasty_data = nasty_buf + nasty_shots * OBJECT_SIZE;
         }
-        level->nasty_shot_points = (uint8_t *)calloc(20 * 8, 1);
     }
 
     level->connect_table = NULL;
@@ -690,16 +688,6 @@ void io_release_level_memory(LevelState *level)
     }
     level->nasty_shot_data = NULL;
     level->other_nasty_data = NULL;
-    free(level->nasty_shot_points);
-    level->nasty_shot_points = NULL;
-
-    if (level->object_data_owned && level->object_data) {
-        free(level->object_data);
-    }
-    level->object_data = NULL;
-    level->plr1_obj = NULL;
-    level->plr2_obj = NULL;
-    level->object_data_owned = false;
 
     free(level->workspace);         level->workspace = NULL;
 
