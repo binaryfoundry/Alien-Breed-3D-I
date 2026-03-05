@@ -2386,8 +2386,9 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
         int32_t dist = calc_dist_euclidean(dx, dz);
 
         if (dist < radius) {
-            /* Only apply splash damage to enemies (not barrels, pickups, etc.) */
-            if (obj_type_to_enemy_index(obj->obj.number) >= 0) {
+            /* Apply splash to enemies and barrels (chain reactions), not pickups etc. */
+            if (obj_type_to_enemy_index(obj->obj.number) >= 0 ||
+                obj->obj.number == OBJ_NBR_BARREL) {
                 int damage = (power * (radius - (int)dist)) / radius;
                 if (damage > 0) {
                     NASTY_SET_DAMAGE(obj, (int8_t)(NASTY_DAMAGE(*obj) + damage));
